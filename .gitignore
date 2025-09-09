@@ -1,4 +1,14 @@
 !/.git*
 
 .idea/
+.vscode/
 save/
+.DS_Store
+
+## test artifacts
+.test-results/
+.test/
+
+*.log
+test-log.txt
+test-report.json

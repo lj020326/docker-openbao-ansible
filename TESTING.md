@@ -1,124 +1,77 @@
+# **OpenBao Test Run Guide**
 
-# Test Run Guide
+This guide details the process for running the OpenBao container test suite. The framework has been designed for portability and consistency by dynamically mapping your host user's ID to the container's user. This eliminates the need for manual file editing and ensures tests run correctly regardless of your host environment.
 
-To execute your tests with these non-root compliant scripts, follow these steps precisely:
+## **1. The Testing Workflow**
 
-## Preparation (Before any docker stack deploy)
+The testing workflow is managed by a single script, test/test_openbao_container.sh, which acts as the orchestrator. The key steps are:
 
-1) **Update Files**: Replace your existing `docker-entrypoint.sh` and `fetch_openbao_info.sh` files with the new content provided above.
+1. **UID/GID Detection**: The test script automatically detects the UID (User ID) and GID (Group ID) of the host user running the script.  
+2. **File Generation**: It dynamically generates passwd and group files, ensuring the openbao user inside the container is correctly mapped to your host user's UID and GID.  
+3. **Volume Permissions**: It uses sudo chown to set the correct permissions on the host volumes (openbao/home/) before they are mounted. This is a critical step for non-root container operation.  
+4. **Docker Compose Execution**: The script then executes docker compose while passing the detected UID and GID as environment variables. The docker-compose.test.yml file is configured to receive these values, so it remains static and universal.
 
-2) **Clean Host Directories**: Ensure your host's mounted `/vault` directories (e.g., `/home/container-user/docker/openbao/home/config/`, `/home/container-user/docker/openbao/home/file/`, `/home/container-user/docker/openbao/home/logs/`) are empty of any previous init files. This is crucial for a clean initialization.
+## **2. Updated Docker Compose Configuration**
 
-```Bash
-rm -fr /home/container-user/docker/openbao/home/file/*
-rm -fr /home/container-user/docker/openbao/home/logs/*
-rm -fr /home/container-user/docker/openbao/home/config/init*
+The docker-compose.test.yml file has been updated to use environment variables for the user ID, removing the hard-coded values and making the file portable.
+
+```yaml
+# In docker-compose.test.yml  
+services:  
+  openbao:  
+    # This user directive uses environment variables  
+    user: ${UID}:${GID}  
+    ...
+
 ```
 
-3) **Verify Host Permissions**: This is critical for non-root containers.  Set ownership for the parent vault directory (adjust path as needed) to match the `docker-compose.yml` defined `user` (e.g., `user: 1102:1102`).  This will ensure the host directories you are mounting into `/vault` (e.g., `/home/container-user/docker/openbao/home`) are owned by the same user ID (UID) and group ID (GID) that `openbao` uses inside the container as defined in the `docker-compose.yml` user key.  Note that the `openbao` user is also mapped to the user/group ID by the passwd/group mounts.
+## **3. The Test Script**
 
-```Bash
-$ grep "user:" docker-compose.yml
-    user: 1102:1102
-$ cat openbao/passwd
-openbao:x:1102:1102:openbao user:/vault:/bin/bash
-$ cat openbao/group
-openbao:x:1102:
-$ id container-user
-uid=1102(container-user) gid=1102(container-user) groups=4(adm),24(cdrom),30(dip),46(plugdev),998(docker),1102(container-user)
-# Example: To set ownership for the parent directory (adjust path as needed) to match the `docker-compose.yml` defined `user`
-$ sudo chown -R 1102:1102 /home/container-user/docker/openbao/home
+The `test/test-openbao-container.sh` script handles the entire dynamic process. It is the only command you need to run to prepare and execute the tests.
+
+```shell
+test/test-openbao-container.sh 2>&1 | tee test-log.txt
 ```
 
-If these permissions are not correct, the container will likely fail to start due to lack of write access.
-
-## Test Criteria Execution
-
-1. **Initialization and encrypting token and keys**:
-
-- **Deploy the stack**:
-
-```Bash
-docker pull lj020326/openbao-ansible:latest
-docker stack deploy -c docker-compose.yml docker_stack --with-registry-auth
+Or run with full debugging
+```shell
+bash -x test/test-openbao-container.sh 2>&1 | tee test-log.txt
 ```
 
-**Monitor logs for initialization**: Observe the OpenBao container logs for messages indicating initialization, encryption, and unsealing. Look for Entrypoint INFO: OpenBao initialized successfully. and Entrypoint INFO: OpenBao initialization details encrypted to /vault/config/init.json.enc.
+## **4. Detailed Test Scenarios**
 
-```Bash
-docker service logs -f docker_stack_openbao
-```
+The test suite is designed to cover the entire lifecycle of the container, from its initial cold start to continuous operation. It's not just a single health check; it's a series of integrated tests that validate the most critical features of the non-root compliant OpenBao container.
 
-(Expect to see logs indicating initialization, encryption, and auto-unseal, all without su-exec errors)
+### **Initial Container Startup and State Management**
 
-2. **Remove container**:
+This scenario tests the "cold start" behavior of the container. It's the very first time the container runs and encounters a completely empty configuration.
 
-**Remove the OpenBao service**:
+* **What it covers**: The test verifies that the docker-entrypoint.sh script correctly detects the uninitialized state of the OpenBao vault. It then triggers the openbao operator init command, which generates a new root token and a set of unseal keys.  
+* **Why it's important**: This validates that the container can perform its essential one-time setup without manual intervention. The ability to automatically generate and securely manage these critical secrets is a cornerstone of this solution.  
+* **Expected outcome**: The logs should show openbao operator init executing successfully. Crucially, a new file, init.json.enc, should be created in the mounted volume openbao/home/config, containing the encrypted unseal keys and root token.
 
-```Bash
-docker service rm docker_stack_openbao
-```
+### **Auto-Unseal and Container Resilience**
 
-(This removes the running container, but your encrypted init.json.enc file should persist on the host volume.)
+This scenario simulates a real-world event, such as a container restart. The test script removes the running container, but leaves the data volumes intact.
 
-3. **Restart container to test decrypting encrypted keys and auto unsealing existing vault**:
+* **What it covers**: Upon restart, the docker-entrypoint.sh script checks the state of the vault again. This time, it finds the encrypted init.json.enc file from the previous step. It automatically decrypts this file and uses the unseal keys to unseal the vault without requiring any user input.  
+* **Why it's important**: This is a crucial test for production environments. It proves that the container is resilient and can recover from a restart automatically. It ensures that the auto-unseal functionality is working as designed and that the vault becomes available for use almost immediately after boot.  
+* **Expected outcome**: The logs should clearly indicate that the container found the init.json.enc file, decrypted its contents, and successfully unsealed the vault.
 
-**Redeploy the stack (only OpenBao service will be created/updated)**:
+### **Data Integrity and Accessibility**
 
-```Bash
-docker stack deploy -c docker-compose.yml docker_stack --with-registry-auth
-```
+This test verifies that the sensitive data generated during the initialization phase is both securely stored and accessible when needed.
 
-**Monitor logs for auto-unseal**: This time, you should see logs indicating decryption and auto-unsealing of an already initialized Vault. Look for Entrypoint INFO: Found encrypted init JSON file at /vault/config/init.json.enc, attempting auto-unseal. and Entrypoint INFO: Auto-unseal process completed... OpenBao successfully unsealed.
+* **What it covers**: The test uses a dedicated utility script, fetch_openbao_info.sh, that runs inside the container to decrypt the init.json.enc file. The test suite validates two key scenarios:  
+  1. Fetching and displaying the entire decrypted content.  
+  2. Fetching only the root token, isolated from the rest of the file.  
+* **Why it's important**: This confirms that the ansible-vault decryption process is working as intended and that the root token can be programmatically retrieved for use in other scripts or automations. This is essential for securely bootstrapping other services that need to authenticate with OpenBao.
 
-```Bash
-docker service logs -f docker_stack_openbao
-```
+### **External Service Connectivity**
 
-(Expect logs confirming decryption of existing keys and successful auto-unseal.)
+The final tests check that the container is not only internally healthy but also fully accessible and operational from the host machine.
 
-4. **Fetch tests to verify initialization content can be fetched**:
+* **What it covers**: The test suite uses curl to make API calls from the host to the container's exposed endpoint. It verifies both an unauthenticated endpoint (/v1/sys/health) and an authenticated one (/v1/sys/mounts) using the root token fetched in the previous step.  
+* **Why it's important**: This validates that the container is properly networking and that its API is correctly serving both public and authenticated requests. It's a final sanity check that everything is working as expected from an external perspective.
 
-**Get the container ID**:
-
-```Bash
-CONTAINER_ID=$(docker ps --filter "name=docker_stack_openbao" --format "{{.ID}}")
-echo "OpenBao Container ID: ${CONTAINER_ID}"
-```
-
-**Fetch and display full content**:
-
-```Bash
-docker exec -it "${CONTAINER_ID}" sh -c '/usr/local/bin/fetch_openbao_info.sh --content'
-```
-
-(Expect to see the JSON output containing unseal_keys_b64 and root_token.)
-
-**Fetch only the root token**:
-
-```Bash
-ROOT_TOKEN=$(docker exec -it "${CONTAINER_ID}" sh -c '/usr/local/bin/fetch_openbao_info.sh --root-token')
-echo "Retrieved Root Token: ${ROOT_TOKEN}"
-```
-
-(Expect only the root token string to be printed, with no extra debug output.)
-
-5. **Host based curl tests against the Traefik OpenBao HTTPS endpoint**:
-
-**Test health (non-token based)**:
-
-```Bash
-curl -s "https://openbao.admin.johnson.int/v1/sys/health" | jq
-```
-
-(Expect JSON output with "sealed": false, "initialized": true.)
-
-**Test sys/mounts (with token)**:
-
-```Bash
-# You'll need the ROOT_TOKEN from step 4 for this.
-# Make sure your host has jq installed for pretty printing.
-curl -s -H "X-Vault-Token: ${ROOT_TOKEN}" "https://openbao.admin.johnson.int/v1/sys/mounts" | jq
-```
-
-(Expect JSON output listing mounted secrets engines, confirming successful authentication with the root token.)
+By using this framework, you can be confident that your tests are running in a consistent and secure manner every time.

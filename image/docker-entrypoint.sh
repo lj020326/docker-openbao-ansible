@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+## ref: https://github.com/openbao/openbao/blob/main/scripts/docker/docker-entrypoint.sh
+
 # --- Logging Configuration ---
 # Define log levels with numeric values
 LOG_LEVEL_ERROR=0
@@ -20,7 +22,7 @@ _get_numeric_log_level() {
         "INFO") echo "$LOG_LEVEL_INFO" ;;
         "DEBUG") echo "$LOG_LEVEL_DEBUG" ;;
         "TRACE") echo "$LOG_LEVEL_TRACE" ;;
-        *) echo "$LOG_LEVEL_INFO" ;; # Default to INFO if an invalid level is provided
+        *) echo "$LOG_LEVEL_INFO" ;;
     esac
 }
 
@@ -39,12 +41,9 @@ _log() {
 }
 # --- End Logging Configuration ---
 
-# In a non-root container, the user is already `openbao` due to the Dockerfile's `USER openbao` directive.
-# Therefore, we no longer need to check for the 'openbao' user in /etc/passwd or use 'su-exec'.
-# All commands will run as the 'openbao' user inherently.
 _log INFO "Running as user: $(id -u), group: $(id -g)"
 
-# Source env_secrets_expand.sh FIRST to ensure environment variables are set
+# Source env_secrets_expand.sh to resolve secrets
 if [ -f "/usr/local/bin/env_secrets_expand.sh" ]; then
     _log DEBUG "Sourcing env_secrets_expand.sh"
     . /usr/local/bin/env_secrets_expand.sh
@@ -53,70 +52,47 @@ else
     exit 1
 fi
 
-# Set defaults for OpenBao environment variables AFTER sourcing env_secrets_expand.sh
-# Values from openbao.env (via env_secrets_expand.sh) will take precedence.
-: "${OPENBAO_HOME_DIR:=/vault}"
-: "${OPENBAO_CONFIG_DIR:=/vault/config}"
-# Changed OPENBAO_INIT_FILE to OPENBAO_INIT_FILE_PREFIX as it's now a JSON file base name
-: "${OPENBAO_INIT_FILE_PREFIX:=$OPENBAO_CONFIG_DIR/init}"
-# INTERNAL_VAULT_ADDR is used by the entrypoint for health checks.
-# It prioritizes VAULT_ADDR from the environment, falling back to local http.
-: "${INTERNAL_VAULT_ADDR:=${VAULT_ADDR:-http://127.0.0.1:8200}}"
+# Set defaults for OpenBao environment variables
+OPENBAO_RUN_SETUP="${OPENBAO_RUN_SETUP:-true}"
+# Align home directory with docker-compose mapping
+OPENBAO_HOME_DIR="${OPENBAO_HOME_DIR:-/vault}"
+OPENBAO_CONFIG_DIR="${OPENBAO_CONFIG_DIR:-${OPENBAO_HOME_DIR}/config}"
+OPENBAO_INIT_FILE_PREFIX="${OPENBAO_INIT_FILE_PREFIX:-${OPENBAO_CONFIG_DIR}/init}"
+
+# INTERNAL_VAULT_ADDR is used by the entrypoint for health checks and other internal CLI commands
+INTERNAL_VAULT_ADDR=http://127.0.0.1:8200
+VAULT_ADDR="${VAULT_ADDR:-http://127.0.0.1:8200}"
 
 _log DEBUG "docker-entrypoint.sh started with args: $@"
-_log DEBUG "Shell environment after initial setup:"
+_log DEBUG "Shell environment:"
 env | grep -v -i ANSIBLE_VAULT_PASSWORD >&2
 
 _log DEBUG "Derived config settings:"
-_log DEBUG "OPENBAO_HOME_DIR: "$OPENBAO_HOME_DIR""
-_log DEBUG "OPENBAO_CONFIG_DIR: "$OPENBAA_CONFIG_DIR""
-_log DEBUG "OPENBAO_INIT_FILE_PREFIX (for JSON data): "$OPENBAO_INIT_FILE_PREFIX""
-_log DEBUG "INTERNAL_VAULT_ADDR for health checks: "$INTERNAL_VAULT_ADDR""
-_log DEBUG "VAULT_ADDR for CLI commands: "$VAULT_ADDR""
-
-# Ensure necessary directories exist.
-# These mkdir commands will create directories with the permissions of the current user (openbao).
-mkdir -p "$OPENBAO_HOME_DIR" "$OPENBAO_CONFIG_DIR" "/vault/file" "/vault/logs"
+_log DEBUG "OPENBAO_HOME_DIR: ${OPENBAO_HOME_DIR}"
+_log DEBUG "OPENBAO_CONFIG_DIR: ${OPENBAO_CONFIG_DIR}"
+_log DEBUG "OPENBAO_INIT_FILE_PREFIX (for JSON data): ${OPENBAO_INIT_FILE_PREFIX}"
+_log DEBUG "INTERNAL_VAULT_ADDR for health checks: ${INTERNAL_VAULT_ADDR}"
+_log DEBUG "VAULT_ADDR for CLI commands: ${VAULT_ADDR}"
 
 # --- Permission and Writability Validation for Critical Directories ---
-# In a non-root container, we cannot change ownership or set permissions for existing host-mounted volumes.
-# We must assume these directories are already correctly owned and writable by the 'openbao' user
-# (UID and GID matching the USER directive in the Dockerfile).
-# This function will only validate writability by the current user.
-validate_directory_permissions() {
-    local dir_path="$1"
-    local dir_friendly_name="$2"
-    _log DEBUG "Validating writability for "$dir_path" ("$dir_friendly_name")..."
-
-    if [ ! -d "$dir_path" ]; then
-        _log ERROR "Required directory "$dir_path" ("$dir_friendly_name") does not exist."
-        _log ERROR "Please ensure the host directory mounted to "$dir_path" exists and is properly mounted."
-        exit 1
-    fi
-
-    # Test writability for the current user (which is 'openbao' as per Dockerfile)
-    local test_file="$dir_path/.test_write_$(date +%s%N)"
-    touch "$test_file" 2>/dev/null
-    if [ $? -ne 0 ]; then
-        _log ERROR "Directory "$dir_path" ("$dir_friendly_name") is not writable by the current 'openbao' user (UID $(id -u), GID $(id -g))."
-        _log ERROR "Please ensure the host directory mounted to "$dir_path" has write permissions for this user."
-        exit 1
-    fi
-    rm -f "$test_file"
-    _log DEBUG "Writability for "$dir_path" is correct."
+validate_writability() {
+    local dir="$1"
+    local description="$2"
+    _log DEBUG "Validating writability for '$dir' ('$description')..."
+    touch "$dir/test_write" || { _log ERROR "Cannot write to $dir ($description)"; exit 1; }
+    rm -f "$dir/test_write" || { _log ERROR "Cannot remove test file in $dir ($description)"; exit 1; }
+    _log DEBUG "Writability for $dir is correct."
 }
 
-validate_directory_permissions "/vault/file" "Storage Directory"
-validate_directory_permissions "/vault/logs" "Audit Log Directory"
-validate_directory_permissions "$OPENBAO_CONFIG_DIR" "Configuration Directory"
-# --- End Permission and Writability Validation ---
+validate_writability "$OPENBAO_CONFIG_DIR" "Configuration Directory"
+validate_writability "$OPENBAO_HOME_DIR/file" "Storage Directory"
 
+# --- End Permission and Writability Validation ---
 
 # Handle BAO_LOCAL_CONFIG
 if [ -n "$BAO_LOCAL_CONFIG" ]; then
     _log DEBUG "Writing BAO_LOCAL_CONFIG to "$OPENBAO_CONFIG_DIR/local.json""
     echo "$BAO_LOCAL_CONFIG" > "$OPENBAO_CONFIG_DIR/local.json"
-    # File will be created with current user's (openbao) permissions and default umask
 fi
 
 # Check if config file exists
@@ -125,7 +101,7 @@ if [ ! -r "$OPENBAO_CONFIG_DIR/local.json" ]; then
     exit 1
 fi
 _log DEBUG "Contents of "$OPENBAO_CONFIG_DIR/local.json":"
-cat "$OPENBAO_CONFIG_DIR/local.json" >&2 # Direct cat to stderr for debug logs
+cat "$OPENBAO_CONFIG_DIR/local.json" >&2
 
 # Function for health checking with verbose curl output
 wait_for_openbao() {
@@ -139,9 +115,7 @@ wait_for_openbao() {
     while [ "$attempt" -lt "$max_wait_attempts" ]; do
         local temp_verbose_log=$(mktemp)
         local http_code
-        # Curl will run as the current user (openbao)
         http_code=$(curl -v -k -s -o /dev/null -w "%{http_code}" "$url" 2>"$temp_verbose_log" || true)
-
         cat "$temp_verbose_log" > /dev/stderr
         rm "$temp_verbose_log"
 
@@ -163,31 +137,28 @@ wait_for_openbao() {
 
 
 get_openbao_status_output() {
-    # bao status will run as the current user (openbao)
     VAULT_ADDR="${VAULT_ADDR}" bao status -format=json 2>/dev/null || true
 }
 
 check_initialized() {
     local status_output
     status_output=$(get_openbao_status_output)
-    _log TRACE "check_initialized: Raw bao status output: $status_output"
     if echo "$status_output" | jq -e '.initialized == true' >/dev/null 2>&1; then
-        _log DEBUG "check_initialized: jq returned true. OpenBao IS initialized."
+        _log DEBUG "check_initialized: OpenBao IS initialized."
         return 0
     fi
-    _log DEBUG "check_initialized: jq returned false/error. OpenBao IS NOT initialized."
+    _log DEBUG "check_initialized: OpenBao IS NOT initialized."
     return 1
 }
 
 check_sealed() {
     local status_output
     status_output=$(get_openbao_status_output)
-    _log TRACE "check_sealed: Raw bao status output: $status_output"
     if echo "$status_output" | jq -e '.sealed == true' >/dev/null 2>&1; then
-        _log DEBUG "check_sealed: jq returned true. OpenBao IS sealed."
+        _log DEBUG "check_sealed: OpenBao IS sealed."
         return 0
     fi
-    _log DEBUG "check_sealed: jq returned false/error. OpenBao IS NOT sealed."
+    _log DEBUG "check_sealed: OpenBao IS NOT sealed."
     return 1
 }
 
@@ -200,52 +171,41 @@ encrypt_init_json_file() {
         return 1
     fi
     _log DEBUG "Encrypting "$unencrypted_file" to "$encrypted_file" with ansible-vault"
-
-    local ansible_vault_password_file=$(mktemp)
-    echo "$ANSIBLE_VAULT_PASSWORD" > "$ansible_vault_password_file"
-    chmod 600 "$ansible_vault_password_file" # chmod by current user (openbao)
-
-    # ansible-vault will run as the current user (openbao)
-    if ! ansible-vault encrypt "$unencrypted_file" --output="$encrypted_file" --vault-password-file="$ansible_vault_password_file"; then
-        _log ERROR "Failed to encrypt "$unencrypted_file"."
-        rm -f "$ansible_vault_password_file"
+    if ! ansible-vault encrypt "$unencrypted_file" --output="$encrypted_file" --vault-password-file=<(echo "${ANSIBLE_VAULT_PASSWORD}"); then
+        _log ERROR "Failed to encrypt initialization file with ansible-vault."
         return 1
     fi
-    rm -f "$ansible_vault_password_file"
-    _log DEBUG "Successfully encrypted "$unencrypted_file" to "$encrypted_file""
-    rm -f "$unencrypted_file" # Remove unencrypted file after successful encryption
+    _log INFO "Initialization file encrypted to "$encrypted_file""
     return 0
 }
 
-# Decrypts the encrypted init JSON file to a temporary file
-decrypt_init_json_file() {
+# Decrypts the encrypted file and return decrypted content
+decrypt_ansible_vault_file() {
     local encrypted_file="$1"
-    local temp_file="$2"
+
+    # Check if the encrypted file exists and is readable
     if [ ! -r "$encrypted_file" ]; then
-        _log ERROR "Encrypted init file not found or not readable at "$encrypted_file""
+        _log ERROR "Encrypted file not found or not readable at '$encrypted_file'"
         return 1
     fi
 
+    # Check if the Ansible vault password is set
     if [ -z "$ANSIBLE_VAULT_PASSWORD" ]; then
-        _log ERROR "ANSIBLE_VAULT_PASSWORD is not set. Cannot decrypt initialization file."
+        _log ERROR "ANSIBLE_VAULT_PASSWORD is not set. Cannot decrypt file."
         return 1
     fi
 
-    local ansible_vault_password_file=$(mktemp)
-    echo "$ANSIBLE_VAULT_PASSWORD" > "$ansible_vault_password_file"
-    chmod 600 "$ansible_vault_password_file" # chmod by current user (openbao)
-
-    # ansible-vault will run as the current user (openbao)
-    if ! ansible-vault decrypt "$encrypted_file" --output="$temp_file" --vault-password-file="$ansible_vault_password_file"; then
-        _log ERROR "Failed to decrypt "$encrypted_file"."
-        rm -f "$ansible_vault_password_file" "$temp_file"
+    # Use a here string to pass the password to ansible-vault
+    local decrypted_content
+    if ! decrypted_content=$(ansible-vault decrypt "$encrypted_file" --output=- --vault-password-file=<(echo "${ANSIBLE_VAULT_PASSWORD}")); then
+        _log ERROR "Failed to decrypt '$encrypted_file'."
         return 1
     fi
-    rm -f "$ansible_vault_password_file"
-    _log DEBUG "Successfully decrypted "$encrypted_file" to "$temp_file""
+
+    _log DEBUG "Successfully decrypted '$encrypted_file' to a variable."
+    echo "$decrypted_content"
     return 0
 }
-
 
 # This function will generate an init.json file based on the *current* state of OpenBao
 # (i.e., by performing a `bao operator init` dry-run or similar to get keys if possible,
@@ -319,8 +279,8 @@ record_initialization_state() {
 
 
 initialize_openbao() {
-    local unencrypted_init_json_file="${OPENBAO_INIT_FILE_PREFIX}.json"
-    local encrypted_init_json_file="${OPENBAO_INIT_FILE_PREFIX}.json.enc"
+    _log INFO "Initializing OpenBao..."
+    local encrypted_init_file="${OPENBAO_INIT_FILE_PREFIX}.json.enc"
 
     if [ -z "$ANSIBLE_VAULT_PASSWORD" ]; then
         _log ERROR "ANSIBLE_VAULT_PASSWORD is not set. Cannot initialize and encrypt OpenBao setup."
@@ -328,16 +288,11 @@ initialize_openbao() {
         return 1
     fi
 
-    _log INFO "Initializing OpenBao. Unencrypted init JSON file will be at: "$unencrypted_init_json_file""
-
-    _log DEBUG "Running bao operator init"
-    local init_output
-
     _log TRACE "Enabling set -x for bao operator init command."
     set -x # Enable verbose tracing for the next command
 
     # Use INTERNAL_VAULT_ADDR for CLI commands targeting the local server
-    init_output=$(VAULT_ADDR="${INTERNAL_VAULT_ADDR}" bao operator init -key-shares=5 -key-threshold=3 -format=json 2>&1)
+    local init_output=$(VAULT_ADDR="${INTERNAL_VAULT_ADDR}" bao operator init -key-shares=5 -key-threshold=3 -format=json 2>&1)
     local init_exit_code=$?
     set +x # Disable verbose tracing
     _log TRACE "Disabled set -x."
@@ -355,23 +310,24 @@ initialize_openbao() {
         return 1
     fi
 
-    _log DEBUG "Saving initialization details to "$unencrypted_init_json_file""
-    echo "$init_output" | jq '{unseal_keys_b64: .unseal_keys_b64, root_token: .root_token}' > "$unencrypted_init_json_file"
-    chmod 0600 "$unencrypted_init_json_file" # chmod by current user (openbao)
+    _log INFO "Initialization successful. Encrypting init data..."
 
-    _log INFO "OpenBao initialized successfully."
+    # Write the raw JSON output to a file temporarily for encryption
+    local unencrypted_init_file=$(mktemp)
+    echo "$init_output" > "$unencrypted_init_file"
+    chmod 0600 "$unencrypted_init_file" # chmod by current user (openbao)
 
-    if encrypt_init_json_file "$unencrypted_init_json_file" "$encrypted_init_json_file"; then
-        _log INFO "OpenBao initialization details encrypted to "$encrypted_init_json_file""
-        if [ ! -f "$encrypted_init_json_file" ]; then
-            _log ERROR "Encryption reported success, but file "$encrypted_init_json_file" was not found."
-            return 1
-        fi
-        return 0
-    else
-        _log ERROR "Initialization succeeded, but encryption failed."
+    if ! encrypt_init_json_file "$unencrypted_init_file" "$encrypted_init_file"; then
+        _log ERROR "Failed to encrypt initialization data."
+        rm -f "$unencrypted_init_file"
         return 1
     fi
+
+    # Clean up unencrypted temporary files
+    rm -f "$unencrypted_init_file"
+
+    _log INFO "Initialization keys and root token saved securely."
+    return 0
 }
 
 unseal_openbao() {
@@ -382,19 +338,18 @@ unseal_openbao() {
     unseal_output=$(VAULT_ADDR="${VAULT_ADDR}" bao operator unseal "$unseal_key" 2>&1)
     local unseal_exit=$?
 
-    if [ $unseal_exit -eq 0 ]; then
-        _log DEBUG "OpenBao successfully unsealed."
-        return 0
-    else
+    if [ $unseal_exit -ne 0 ]; then
         _log ERROR "Failed to unseal OpenBao. Exit code: "$unseal_exit"."
         _log ERROR "Output: "$unseal_output""
         return 1
     fi
+
+    _log DEBUG "OpenBao successfully unsealed."
+    return 0
 }
 
 auto_unseal() {
     local encrypted_init_json_file="${OPENBAO_INIT_FILE_PREFIX}.json.enc"
-    local temp_decrypted_json_file="/tmp/openbao_init_decrypted.json"
 
     if [ ! -r "$encrypted_init_json_file" ]; then
         _log ERROR "Encrypted init JSON file not found at "$encrypted_init_json_file". Cannot auto-unseal."
@@ -402,20 +357,15 @@ auto_unseal() {
     fi
     _log DEBUG "Found encrypted init JSON file at "$encrypted_init_json_file", attempting auto-unseal."
 
-    if ! decrypt_init_json_file "$encrypted_init_json_file" "$temp_decrypted_json_file"; then
+    if ! init_json=$(decrypt_ansible_vault_file "${OPENBAO_INIT_FILE_PREFIX}.json.enc"); then
         _log ERROR "Failed to decrypt init JSON file for auto-unseal."
-        rm -f "$temp_decrypted_json_file"
         return 1
     fi
 
-    local unseal_keys
-    unseal_keys=$(jq -r '.unseal_keys_b64[]' < "$temp_decrypted_json_file")
+    local unseal_keys=$(echo "${init_json}" | jq -r '.unseal_keys_b64[]')
 
-    local root_token
-    root_token=$(jq -r '.root_token' < "$temp_decrypted_json_file")
+    local root_token=$(echo "${init_json}" | jq -r '.root_token')
     _log DEBUG "Root token found for reference (not used for unseal): [redacted]"
-
-    rm -f "$temp_decrypted_json_file" # Clean up decrypted file immediately
 
     if [ -z "$unseal_keys" ]; then
         _log ERROR "No unseal keys found in decrypted initialization data."
@@ -505,6 +455,32 @@ background_init_and_unseal() {
         _log DEBUG "OpenBao is already unsealed."
     fi
 
+    _log INFO "Verifying vault status before setup..."
+    status_output=$(bao status 2>&1)
+    if echo "$status_output" | grep -q "Sealed.*true"; then
+        _log ERROR "Vault is sealed before running openbao_setup.sh: $status_output"
+        _log DEBUG "Server log contents:"
+        cat ${OPENBAO_HOME_DIR}/logs/server.log >&2
+        stop_server_background
+        exit 1
+    fi
+    _log DEBUG "Vault status: $status_output"
+
+    if [ "$OPENBAO_RUN_SETUP" = true ]; then
+        _log INFO "Running openbao_setup.sh to configure policies and secret engines..."
+#        . /usr/local/bin/openbao_setup.sh --all
+        eval "/usr/local/bin/openbao_setup.sh --all"
+        if [ $? -ne 0 ]; then
+            _log ERROR "openbao_setup.sh failed."
+            _log DEBUG "Server log contents:"
+            cat ${OPENBAO_HOME_DIR}/logs/server.log >&2
+            stop_server_background
+            exit 1
+        fi
+    fi
+    touch "${OPENBAO_HOME_DIR}/.setup_completed"
+    _log INFO "Wrote status file to ${OPENBAO_HOME_DIR}/.setup_completed"
+
     _log INFO "Background init/unseal process completed successfully."
 }
 
@@ -518,6 +494,20 @@ run_server() {
     # bao server will run as the current user (openbao)
     exec bao server $server_args
 }
+
+# Signal handling to ensure graceful shutdown
+# The server is exec'd, so it will handle signals directly.
+# This part is mostly for the init/unseal background process.
+stop_server_background() {
+    local server_pid=$(jobs -p | head -1)
+    if [ -n "$server_pid" ]; then
+        _log INFO "Sending SIGTERM to background server process (PID: $server_pid)..."
+        kill -s TERM "$server_pid"
+        wait "$server_pid" >/dev/null 2>&1
+        _log INFO "Background server process stopped."
+    fi
+}
+trap stop_server_background EXIT TERM INT HUP
 
 if [ $# -eq 0 ]; then
     run_server

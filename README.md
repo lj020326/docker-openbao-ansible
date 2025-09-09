@@ -1,3 +1,5 @@
+[![Docker images build](https://github.com/lj020326/docker-openbao-ansible/actions/workflows/build-test-push.yml/badge.svg)](https://github.com/lj020326/docker-openbao-ansible/actions/workflows/build-test-push.yml)
+
 # OpenBao Enhanced Docker Image with Ansible Vault
 
 This Docker image extends the official `openbao/openbao:2.3.2` image to provide a secure, automated setup for running an OpenBao server with initialization and auto-unsealing, using Ansible Vault to encrypt sensitive initialization data. The image is designed to run as a non-root user (`openbao`, UID=1102, GID=1102) and avoids requiring `chown` or root privileges at runtime, adhering to Docker security best practices.
@@ -23,11 +25,11 @@ This Docker image extends the official `openbao/openbao:2.3.2` image to provide 
 - **Docker**: Version 20.10 or later.
 - **Docker Compose**: Version 2.0 or later.
 - **Host Setup**:
-  - An `openbao` user (UID=1102, GID=1102) defined in `/etc/passwd` on the host.
-  - Host directories for `/vault/file`, `/vault/logs`, `/vault/custom_config`, and `/run/secrets` owned by `openbao` (1102:1102).
+  - A host non-root docker/container user: E.g., `container-user` user (UID=1102, GID=1102).
+  - Host directories for `/vault/file`, `/vault/logs`, `/vault/custom_config`, and `/run/secrets` owned by the host docker user.
 - **Ansible Vault Password**: A secure password stored in `/home/container-user/docker/openbao/secrets/ansible_vault_password` or set via the `ANSIBLE_VAULT_PASSWORD` environment variable.
 
-## Installation
+## Setup
 
 ### 1. Clone or Create Project Directory
 ```bash
@@ -35,20 +37,26 @@ mkdir openbao-ansible
 cd openbao-ansible
 ```
 
-### 2. Create Dockerfile
-Create a `Dockerfile` with the following content:
-```dockerfile
-FROM openbao/openbao:2.3.2
-USER root
-RUN apk add --no-cache ansible
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY env_secrets_expand.sh /usr/local/bin/env_secrets_expand.sh
-RUN chmod 755 /usr/local/bin/docker-entrypoint.sh /usr/local/bin/env_secrets_expand.sh
-USER openbao
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+### 2. Set Up Host Directories and Configuration
+
+This section highlights the steps necessary to properly set up the container runtime environment for the non-root `openbao` container.
+
+In summary, the following steps are used to map the host docker user to the container `openbao` user.
+
+The following example uses a host `user:group` of `container-user:container-user` with corresponding `uid:gid` of `1102:1102`.
+This can be set to an alternate `UID:GID` based on the specific host docker UID/GID in the environment.
+
+**Identify the `UID:GID` for the host runtime docker user used to run the docker stack in your environment.**
+
+Example: Given a host runtime docker user `container-user`:
+```bash
+# find out the UID/GID for the container user used to run the docker stack
+$ id container-user
+uid=1102(container-user) gid=1102(container-user) groups=4(adm),24(cdrom),30(dip),46(plugdev),998(docker),1102(container-user)
 ```
 
-### 3. Create Docker Compose File
+**Create Docker Compose File**
+
 Create a `docker-compose.yml` file:
 ```yaml
 services:
@@ -56,18 +64,17 @@ services:
   openbao:
     image: lj020326/openbao-ansible:latest
     container_name: docker-openbao-1
+    user: "1102:1102"
     environment:
       - VAULT_ADDR=http://127.0.0.1:8200
       - ANSIBLE_VAULT_PASSWORD=/run/secrets/ansible_vault_password
     ports:
       - "8200:8200"
     volumes:
-      - /home/container-user/docker/openbao/home/file:/vault/file
-      - /home/container-user/docker/openbao/home/logs:/vault/logs
-      - /home/container-user/docker/openbao/home/custom_config:/vault/custom_config
-      - /home/container-user/docker/openbao/secrets:/run/secrets
       - /etc/passwd:/etc/passwd:ro
-    user: openbao
+      - /etc/groups:/etc/groups:ro
+      - /home/container-user/docker/openbao/secrets:/run/secrets
+      - /home/container-user/docker/openbao/home:/vault
     healthcheck:
       test: ["CMD-SHELL", "vault status > /vault/logs/healthcheck_output 2>&1 && grep -q 'Sealed.*false' /vault/logs/healthcheck_output"]
       interval: 30s
@@ -81,38 +88,48 @@ networks:
     driver: bridge
 ```
 
-### 4. Set Up Host Directories and Secrets
-Create the necessary directories and set permissions:
+**Make sure the compose `user` key is set to the host docker user `UID:GID`.**
+
 ```bash
-# assuming a host user:group "container-user:container-user" with uid:gid "1102:1102" - can be overridden
-$ id container-user
-uid=1102(container-user) gid=1102(container-user) groups=4(adm),24(cdrom),30(dip),46(plugdev),998(docker),1102(container-user)
-# the `docker-compose.yml` user key defines the host uid/gid used to run the container
 $ grep "user:" docker-compose.yml
-    user: 1102:1102
-# the host "container-user" user is mapped to the container user/group "openbao" with mounts on /etc/passwd and /etc/groups
+    user: "1102:1102"
+```
+
+**Set the `openbao` user and group to map to the host container user in `/etc/passwd` and `/etc/groups`**
+
+The docker-compose.yml already specifies the mounts on `/etc/passwd` and `/etc/groups` used to map the container user to the host docker user.
+
+```bash
+# the host user is mapped to the container user:group `openbao`
 $ cat openbao/passwd
 openbao:x:1102:1102:openbao user:/vault:/bin/bash
 $ cat openbao/group
 openbao:x:1102:
-# Example: To set ownership for the parent directory (adjust path as needed) to match the `docker-compose.yml` defined `user`
-$ sudo chown -R 1102:1102 /home/container-user/docker/openbao/home
+```
+
+**Set ownership for the `openbao` base directory (adjust path as needed) to match the `docker-compose.yml`**
+
+```bash
 $ mkdir -p /home/container-user/docker/openbao/home/{file,logs,custom_config}
-$ mkdir -p /home/container-user/docker/openbao/secrets
-$ echo "<secure-ansible-vault-password>" > /home/container-user/docker/openbao/secrets/ansible_vault_password
 $ chown -R 1102:1102 /home/container-user/docker/openbao/home
-$ chown 1102:1102 /home/container-user/docker/openbao/secrets/ansible_vault_password
 $ chmod -R u+rwX /home/container-user/docker/openbao/home
 $ chmod 600 /home/container-user/docker/openbao/secrets/ansible_vault_password
 ```
-Replace `<secure-ansible-vault-password>` with a strong password (e.g., generated via `openssl rand -base64 32`).
 
-### 5. Build and Push the Image
+**Replace `<secure-ansible-vault-password>` with a strong password** (e.g., generated via `openssl rand -base64 32`).
+
+```bash
+$ mkdir -p /home/container-user/docker/openbao/secrets
+$ echo "<secure-ansible-vault-password>" > /home/container-user/docker/openbao/secrets/ansible_vault_password
+$ chown 1102:1102 /home/container-user/docker/openbao/secrets/ansible_vault_password
+```
+
+## Optional: Build and Push the Image to internal registry
 Copy the `docker-entrypoint.sh` and `env_secrets_expand.sh` scripts into the project directory, then build and push:
 ```bash
 docker build -t openbao-ansible:latest -f Dockerfile .
-docker tag openbao-ansible:latest media.johnson.int:5000/openbao-ansible:latest
-docker push media.johnson.int:5000/openbao-ansible:latest
+docker tag openbao-ansible:latest registry.example.int:5000/openbao-ansible:latest
+docker push registry.example.int:5000/openbao-ansible:latest
 ```
 
 ## Usage
@@ -127,10 +144,11 @@ Verify the container is running and healthy:
 ```bash
 docker compose ps -a
 ```
+
 Expected output:
 ```
 NAME               IMAGE                                            COMMAND                  SERVICE   CREATED         STATUS                    PORTS
-docker-openbao-1   media.johnson.int:5000/openbao-ansible:latest   "/usr/local/bin/dock…"   openbao   2 minutes ago   Up 2 minutes (healthy)    0.0.0.0:8200->8200/tcp
+docker-openbao-1   lj020326/openbao-ansible:latest   "/usr/local/bin/dock…"   openbao   2 minutes ago   Up 2 minutes (healthy)    0.0.0.0:8200->8200/tcp
 ```
 
 ### View Logs
