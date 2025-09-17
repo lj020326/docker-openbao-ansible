@@ -1,0 +1,109 @@
+
+networks:
+  traefik_public:
+    external: true
+
+secrets:
+  ansible_vault_password:
+    external: true
+
+services:
+  ########################
+  ## BASE GROUP SERVICES
+  traefik:
+    image: traefik:v3.2
+    environment:
+      PGID: '1102'
+      PUID: '1102'
+      TZ: America/New_York
+    networks:
+      - traefik_public
+    ports:
+      - mode: host
+        protocol: tcp
+        published: 80
+        target: 80
+      - mode: host
+        protocol: tcp
+        published: 443
+        target: 443
+    deploy:
+      endpoint_mode: dnsrr
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+        window: 60s
+      update_config:
+        order: start-first
+      labels:
+        - traefik.enable=true
+        - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+        - traefik.http.routers.http-catchall.entrypoints=http
+        - traefik.http.routers.http-catchall.middlewares=redirect-to-https
+        - traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)
+        - traefik.http.routers.ping.entrypoints=https
+        - traefik.http.routers.ping.rule=Host(`traefik.admin.johnson.int`) && PathPrefix(`/ping`)
+        - traefik.http.routers.ping.service=ping@internal
+        - traefik.http.routers.traefik-rtr.service=api@internal
+        - traefik.http.routers.traefik-rtr.entrypoints=https
+        - traefik.http.routers.traefik-rtr.rule=Host(`traefik.admin.johnson.int`)
+        - traefik.http.services.api.loadbalancer.server.port=8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/container-user/docker/traefik:/etc/traefik
+      - /home/container-user/docker/traefik/certs:/certs
+      - /home/container-user/docker/shared:/shared
+
+
+  ########################
+  ## OPENBAO GROUP SERVICES
+  openbao:
+    image: media.johnson.int:5000/openbao-ansible:latest
+    env_file:
+      - openbao/openbao.env
+    user: 1102:1102
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - traefik_public
+    ports:
+      - 8200:8200
+      - 8201:8201
+    healthcheck:
+      interval: 30s
+      retries: 5
+      start_period: 180s
+      test:
+      - CMD-SHELL
+      - vault status > /vault/logs/healthcheck_output 2>&1 && grep -q 'Sealed.*false' /vault/logs/healthcheck_output
+      timeout: 10s
+    secrets:
+      - ansible_vault_password
+    deploy:
+      mode: replicated
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+      update_config:
+        delay: 10s
+        order: stop-first
+        parallelism: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.openbao.entrypoints=https
+        - traefik.http.routers.openbao.rule=Host(`openbao.admin.johnson.int`)
+        - traefik.http.routers.openbao.service=openbao-svc
+        # Add middleware to ensure X-Forwarded-Proto is set to https
+        - traefik.http.services.openbao-svc.loadbalancer.server.port=8200
+        - traefik.http.services.openbao-svc.loadbalancer.server.scheme=http
+        # Define the middleware for setting X-Forwarded-Proto
+        - traefik.http.middlewares.openbao-forwarded-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.middlewares.openbao-forwarded-headers.headers.customrequestheaders.X-Forwarded-Host=openbao.admin.johnson.int
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /home/container-user/docker/openbao/passwd:/etc/passwd:ro
+      - /home/container-user/docker/openbao/group:/etc/group:ro
+      - /home/container-user/docker/openbao/home:/vault

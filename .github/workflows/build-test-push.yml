@@ -1,0 +1,131 @@
+name: Build, Test, and Push Docker image
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  DOCKER_IMAGE: ${{ github.repository_owner }}/openbao-ansible
+
+jobs:
+  build-test-push:
+    name: Build, Test, and Push
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        versions:
+          - { version: "2.3.2" }
+          - { version: "2.2" }
+          - { version: "latest" }
+
+    # Add necessary permissions for the workflow token
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Install the latest Python 3 version - required for "Run Test Suite"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: If the same workflow is already running from a previous commit, wait for it to finish
+        uses: ahmadnassri/action-workflow-queue@v1
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Set a unique build ID for the current matrix version
+      - name: Set unique build ID
+        id: set-build-id
+        run: echo "BUILD_ID=${{ matrix.versions.version }}-build-${{ github.run_number }}" >> $GITHUB_ENV
+
+      - name: Build image for version ${{ matrix.versions.version }}
+        id: build-test-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./image
+          file: ./image/Dockerfile
+          build-args: |
+            OPENBAO_VERSION=${{ matrix.versions.version }}
+            BUILD_ID=${{ env.BUILD_ID }}
+          # Now, we push the image with multiple tags.
+          push: false
+          # This is the key change to make the image available for testing and subsequent push
+          load: true
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ matrix.versions.version }}
+            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+            ${{ env.DOCKER_IMAGE }}:${{ env.BUILD_ID }}
+
+      - name: Run Test Suite
+        run: |
+          # The test script handles all Docker Compose commands.
+          # It cleans up before and after the test run.
+          bash test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results' \
+            --image-name ${{ env.DOCKER_IMAGE }} --build-id ${{ env.BUILD_ID }}
+
+      - name: Show contents of .test-results/ directory
+        # This step runs even if the previous step failed, so we can always see the report.
+        if: always()
+        run: |
+          pwd
+          find .test-results/ -type f
+
+      - name: Generate and display job summary
+        # This step runs even if the previous step failed, so we can always see the report.
+        if: always()
+        run: |
+          echo "### Test Results for OpenBao ${{ matrix.versions.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Case | Failed |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          # Check if the file exists before attempting to process it
+          if [ -f .test-results/test-report.json ]; then
+            jq -r '.[] | "| \( .test_name ) | **\( .failed )** |"' .test-results/test-report.json >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No test report file found." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Archive Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        ## ref: https://stackoverflow.com/questions/71766432/github-workflow-does-not-upload-artifact
+        env:
+          ACTIONS_STEP_DEBUG: true
+        with:
+          name: test-results
+#          path: ".test-results/"
+          path: "${{ github.workspace }}/.test-results/"
+
+      - name: Publish Unit Test Results
+        # Corrected action name below
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: .test-results/*.xml
+
+      - name: Push image for version ${{ matrix.versions.version }}
+        # This step only runs if the previous test step was successful AND the event is a push to 'main'.
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # The following command manually pushes the image with all desired tags.
+        run: |
+          docker push ${{ env.DOCKER_IMAGE }}:${{ matrix.versions.version }}
+          docker push ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.DOCKER_IMAGE }}:${{ env.BUILD_ID }}

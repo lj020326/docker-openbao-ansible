@@ -1,0 +1,8 @@
+services:
+  openbao-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - OPENBAO_BUILD_IMAGE=${OPENBAO_BUILD_IMAGE}
+    image: "${OPENBAO_BUILD_IMAGE}"

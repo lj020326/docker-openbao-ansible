@@ -1,0 +1,57 @@
+########################
+##
+## The docker-compose.test.yml takes a corresponding test environment specific configuration specified with
+## `--env-file "${TEST_ENV_FILE}"`
+##
+## In the test environment, set `UID`, `PID`, `OPENBAO_TEST_IMAGE`, and `OPENBAO_TEST_DIR`
+## E.g.,
+## `HOST_UID=$(id -u)`
+## `HOST_GID=$(id -g)`
+## `docker compose --env UID="${HOST_UID}" --env GID="${HOST_GID}" -f docker-compose.test.yml up -d`
+## or
+## `docker compose --env-file .env-file -f docker-compose.test.yml up -d`
+########################
+services:
+  openbao-test:
+    image: "${OPENBAO_TEST_IMAGE}"
+    container_name: "${OPENBAO_TEST_CONTAINER_NAME:-openbao}"
+    env_file:
+      - ${OPENBAO_TEST_DIR}/openbao.env
+    user: "${UID}:${GID}"
+    #########################
+    ## Note:
+    ##
+    ## The following method allows a single host to run parallel CICD test jobs (Jenkins, etc) using Docker containers
+    ## and avoid port binding issues.
+    ##
+    ## The core problem is that a host machine can only have one process listening on a specific port at a time.
+    ## When multiple parallel jobs try to run containers that all expose the same port to the host, they will cause a port conflict.
+    ##
+    ## This is prevented using Dynamic Port Mapping:
+    ##
+    ## Instead of hard-coding the host port, let Docker choose an available random port and then retrieve it for use within the test script.
+    ## How it works: When you run a container with docker run -p <host_port>:<container_port>, the host_port is omitted or set it to 0
+    ## (e.g., docker run -p 0:8080), Docker will automatically pick a random, available port on the host and map it to the container's port.
+    ## In the test script: After starting the container, the test script gets the mapped port.
+    ##
+    ## This can be done with the `docker inspect` command or `docker port <container_id> <container_port>`.
+    ## For example, docker port my-container 8080 will return a line like 0.0.0.0:<dynamic_port>.
+    ##
+    ## The test script then parses this output to get the port number and uses it in subsequent steps of your test pipeline.
+    ##
+    ports:
+      - 0:8200
+#      - 8200:8200
+    volumes:
+      - ${OPENBAO_TEST_DIR}/home:${OPENBAO_CONTAINER_HOME_DIR}
+      - ${OPENBAO_TEST_DIR}/secrets:/run/secrets
+      - ${OPENBAO_TEST_DIR}/passwd:/etc/passwd:ro
+      - ${OPENBAO_TEST_DIR}/group:/etc/group:ro
+    healthcheck:
+      test: ["CMD-SHELL", "openbao_info --is-vault-ready"]
+#      test: ["CMD-SHELL", "test -f ${OPENBAO_CONTAINER_HOME_DIR}/config/.setup_completed"]
+#      test: ["CMD-SHELL", "bao status > ${OPENBAO_CONTAINER_HOME_DIR}/logs/healthcheck_output 2>&1 && grep -q 'Sealed.*false' ${OPENBAO_CONTAINER_HOME_DIR}/logs/healthcheck_output"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 360s
