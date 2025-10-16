@@ -20,6 +20,122 @@ $ docker compose --project-name openbao-ansible-test -f test/docker-compose.buil
 $ 
 ```
 
+## debugging
+
+**Get the container ID**:
+
+```Bash
+CONTAINER_ID=$(docker ps --filter "name=docker_stack_openbao" --format "{{.ID}}")
+echo "OpenBao Container ID: ${CONTAINER_ID}"
+```
+
+**Fetch and display full content**:
+
+```Bash
+docker exec -it "${CONTAINER_ID}" sh -c 'openbao_info --content'
+docker exec -it "${CONTAINER_ID}" sh
+/ $ bao login s.tokenvaluehere
+/ $ bao secrets list -format=json
+## The pki/ mount (description: PKI secrets engine for Root CA) is a legacy or misconfigured mount in this case.
+## If it’s not used, disable it to avoid confusion:
+/ $ bao write -force sys/mounts/pki/tune default_lease_ttl=0s
+/ $ bao delete sys/mounts/pki
+## verify configuration
+/ $ bao read pki/config
+/ $ bao list pki/issuers
+/ $ bao read pki/roles/internal-api
+## Verify OpenBao Configuration:
+## Confirm the pki-intermediate mount:
+## Expected: type: pki, description: Intermediate CA PKI.
+/ $ bao read sys/mounts/pki-intermediate
+## Check issuers:
+/ $ bao list pki-intermediate/issuers
+/ $ bao read pki-intermediate/config
+## Ensure at least one issuer is listed and default_issuer is set (e.g., a UUID like 123e4567-e89b-12d3-a456-426614174000).
+## Verify the internal-api role:
+## Expected: allowed_domains: ["api.internal"], allow_subdomains: true, ttl: 720h, max_ttl: 720h.
+/ $ bao read pki-intermediate/roles/internal-api
+## to show vault_admin_token permissions
+/ $ bao token capabilities <vault_admin_token> sys/mounts/pki-intermediate
+/ $ bao token capabilities <vault_admin_token> pki-intermediate/config/ca
+/ $ bao token capabilities <vault_admin_token> pki-intermediate/issuers
+/ $ bao token capabilities <vault_admin_token> pki-intermediate/roles/internal-api
+/ $ bao list pki-intermediate/issuers
+Keys
+----
+46b0e61b-0498-3f5e-4a25-c41615494679
+627570b1-6e16-d590-a4cb-0e629a0abd17
+c6bb2f87-6775-8db9-ba68-25c76c9f5402
+/ $ 
+/ $ bao read pki-intermediate/roles/internal-api
+Key                                   Value
+---                                   -----
+allow_any_name                        false
+allow_bare_domains                    false
+allow_glob_domains                    false
+allow_ip_sans                         true
+allow_localhost                       true
+allow_subdomains                      true
+allow_token_displayname               false
+allow_wildcard_certificates           true
+allowed_domains                       [dettonville.int johnson.int admin.johnson.int control02.johnson.int plex.johnson.int media.johnson.int admin01.dettonville.int admin02.dettonville.int admin03.dettonville.int admin.dettonville.int]
+allowed_domains_template              false
+allowed_other_sans                    []
+allowed_serial_numbers                []
+allowed_uri_sans                      []
+allowed_uri_sans_template             false
+allowed_user_ids                      []
+basic_constraints_valid_for_non_ca    false
+client_flag                           true
+cn_validations                        [email hostname]
+code_signing_flag                     false
+country                               []
+email_protection_flag                 false
+enforce_hostnames                     true
+ext_key_usage                         []
+ext_key_usage_oids                    []
+generate_lease                        false
+issuer_ref                            default
+key_bits                              2048
+key_type                              rsa
+key_usage                             [DigitalSignature KeyAgreement KeyEncipherment]
+locality                              []
+max_ttl                               72h
+no_store                              false
+not_after                             n/a
+not_after_bound                       permit
+not_before                            n/a
+not_before_bound                      permit
+not_before_duration                   30s
+organization                          []
+ou                                    []
+policy_identifiers                    []
+postal_code                           []
+province                              []
+require_cn                            true
+server_flag                           true
+signature_bits                        256
+street_address                        []
+ttl                                   12h
+use_csr_common_name                   true
+use_csr_sans                          true
+use_pss                               false
+/ $ 
+/ $ bao read sys/mounts
+Key                  Value
+---                  -----
+cubbyhole/           map[accessor:cubbyhole_5023a686 config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:0] description:per-token private secret storage external_entropy_access:false local:true options:<nil> plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:false type:cubbyhole uuid:f15e26cd-3241-c5fc-7d87-c60570a1a756]
+identity/            map[accessor:identity_168b3f31 config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:0 passthrough_request_headers:[Authorization]] description:identity store external_entropy_access:false local:false options:<nil> plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:false type:identity uuid:520802e4-fda1-ab97-0097-09c8f12b6293]
+kv/                  map[accessor:kv_c7de6f0f config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:0] deprecation_status:supported description: external_entropy_access:false local:false options:map[version:2] plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:false type:kv uuid:5698a353-6913-0f79-6344-e9d6f36b1b34]
+pki-intermediate/    map[accessor:pki_d8c3be41 config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:0] deprecation_status:supported description:Intermediate CA PKI external_entropy_access:false local:false options:map[] plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:false type:pki uuid:81cf236c-c4f4-8a8a-4ad0-2d61985d6330]
+pki/                 map[accessor:pki_90fd3ed1 config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:1576800000] deprecation_status:supported description:PKI secrets engine for Root CA external_entropy_access:false local:false options:map[] plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:false type:pki uuid:e571f146-ed5d-df81-4900-092f6a2d2e88]
+sys/                 map[accessor:system_ce8bc43b config:map[default_lease_ttl:0 force_no_cache:false max_lease_ttl:0 passthrough_request_headers:[Accept]] description:system endpoints used for control, policy and debugging external_entropy_access:false local:false options:<nil> plugin_version: running_plugin_version:v2.3.2+builtin.bao running_sha256: seal_wrap:true type:system uuid:c3ca1f7e-2088-72fe-9184-5b4698024eab]
+## Manually test certificate issuance:
+/ $ bao write pki-intermediate/issue/internal-api common_name=admin01.dettonville.int ttl=720h
+## to reset the pki-intermediate mount
+/ $ bao write -force sys/mounts/pki-intermediate
+```
+
 ## Run the test image
 
 ```shell
@@ -43,7 +159,7 @@ INFO: Detected host UID: 501, GID: 20
 ...
 $ ## with debug
 $ ljohnson@lees-mbp:[docker-openbao](main)$ ./test/test-openbao-container.sh -x -j -k 2>&1 | tee test-log.txt
-$ alias run_docker_compose="docker compose -f test/docker-compose.test.yml --env-file .test/.env.test"
+$ alias run_docker_compose="docker compose -f test/docker-compose.test.yml --env-file .test/test/.env.test"
 $ 
 $ run_docker_compose up -d
 $ run_docker_compose up -d openbao-test
@@ -53,11 +169,12 @@ $ ## if project names are used as done within the test script then introspect to
 $ ## list the docker projects to get the project name
 $ docker compose ls -a
 $ 
-$ alias run_docker_compose="docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/.env.test"
+$ alias run_docker_compose="docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/test/.env.test"
 $ 
 $ ./test/test-openbao-container.sh -j --image-name "lj020326/openbao-ansible" --build-id "build-44-2.3.2" -k 2>&1 | tee test-log.txt
+$ OPENBAO_TEST_BUILD_ID="test"
 $ PROJECT_NAME=$(docker compose ls -q | head -n 1)
-$ alias run_docker_compose="docker compose --project-name ${PROJECT_NAME} -f test/docker-compose.test.yml --env-file .test/.env.test"
+$ alias run_docker_compose="docker compose --project-name ${PROJECT_NAME} -f test/docker-compose.test.yml --env-file .test/${OPENBAO_TEST_BUILD_ID}/.env.test"
 $ 
 $ run_docker_compose up -d
 $ run_docker_compose up -d openbao-test
@@ -408,3 +525,15 @@ INFO: Final status: passed
 ljohnson@lees-mbp:[docker-openbao](main)$ 
 ```
 
+To run with fail-fast and keep the test temporary files for post-test analysis and/or debugging:
+```shell
+$ test/test-openbao-container.sh -f -k 2>&1 | tee test-log.txt
+$ alias run_docker_compose="docker compose -f test/docker-compose.test.yml --env-file .test/test/.env.test"
+$ run_docker_compose ps
+$ ls -Fla .test/test/
+$ ls -Fla .test/test/home/
+$ ls -Fla .test/test/home/config/
+$ cat .test/test/home/config/init.json
+$ run_docker_compose exec -T openbao-test openbao_info --content
+$ packagedir ../docker-openbao
+```

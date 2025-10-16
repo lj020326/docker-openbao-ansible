@@ -211,6 +211,7 @@ decrypt_ansible_vault_file() {
 # (i.e., by performing a `bao operator init` dry-run or similar to get keys if possible,
 # or simulating if no other option) and then encrypt it.
 # IMPORTANT: This will NOT re-initialize OpenBao if it's already initialized.
+# Updated: record_initialization_state to add users/tokens stubs
 record_initialization_state() {
     local unencrypted_init_json_file="${OPENBAO_INIT_FILE_PREFIX}.json"
     local encrypted_init_json_file="${OPENBAO_INIT_FILE_PREFIX}.json.enc"
@@ -244,8 +245,8 @@ record_initialization_state() {
         if echo "$init_output" | grep -q "Vault is already initialized"; then
             _log WARNING "bao operator init reported 'Vault is already initialized'. Attempting to extract keys from its output."
         else
-            _log ERROR "OpenBao initialization command failed with unexpected exit code "$init_exit_code"."
-            _log ERROR "Output from bao operator init: "$init_output""
+            _log ERROR "OpenBao initialization command failed with unexpected exit code $init_exit_code."
+            _log ERROR "Output from bao operator init: $init_output"
             return 1
         fi
     fi
@@ -253,13 +254,19 @@ record_initialization_state() {
     # Check if the output actually contains the expected JSON structure
     if ! echo "$init_output" | jq -e '.unseal_keys_b64 and .root_token' >/dev/null 2>&1; then
         _log ERROR "OpenBao initialization output did not contain expected unseal_keys_b64 or root_token."
-        _log ERROR "Full Output from bao operator init: "$init_output""
+        _log ERROR "Full Output from bao operator init: $init_output"
         _log ERROR "This can happen if OpenBao is already initialized and sealed, and 'bao operator init' cannot retrieve the keys."
         return 1
     fi
 
     _log DEBUG "Saving initialization details to "$unencrypted_init_json_file""
-    echo "$init_output" | jq '{unseal_keys_b64: .unseal_keys_b64, root_token: .root_token}' > "$unencrypted_init_json_file"
+    # Enhanced JSON with users/tokens
+    echo "$init_output" | jq '{
+        unseal_keys_b64: .unseal_keys_b64,
+        root_token: .root_token,
+        users: {},
+        tokens: {}
+    }' > "$unencrypted_init_json_file"
     chmod 0600 "$unencrypted_init_json_file" # chmod by current user (openbao)
 
     _log INFO "OpenBao initialization state recorded successfully."
@@ -298,15 +305,15 @@ initialize_openbao() {
     _log TRACE "Disabled set -x."
 
     if [ $init_exit_code -ne 0 ]; then
-        _log ERROR "OpenBao initialization failed with exit code "$init_exit_code"."
-        _log ERROR "Output from bao operator init: "$init_output""
+        _log ERROR "OpenBao initialization failed with exit code $init_exit_code."
+        _log ERROR "Output from bao operator init: $init_output"
         return 1
     fi
 
     # Check if the output actually contains the expected JSON structure
     if ! echo "$init_output" | jq -e '.unseal_keys_b64 and .root_token' >/dev/null 2>&1; then
         _log ERROR "OpenBao initialization output did not contain expected unseal_keys_b64 or root_token."
-        _log ERROR "Full Output from bao operator init: "$init_output""
+        _log ERROR "Full Output from bao operator init: $init_output"
         return 1
     fi
 
@@ -314,7 +321,13 @@ initialize_openbao() {
 
     # Write the raw JSON output to a file temporarily for encryption
     local unencrypted_init_file=$(mktemp)
-    echo "$init_output" > "$unencrypted_init_file"
+    # Enhanced JSON with users/tokens
+    echo "$init_output" | jq '{
+        unseal_keys_b64: .unseal_keys_b64,
+        root_token: .root_token,
+        users: {},
+        tokens: {}
+    }' > "$unencrypted_init_file"
     chmod 0600 "$unencrypted_init_file" # chmod by current user (openbao)
 
     if ! encrypt_init_json_file "$unencrypted_init_file" "$encrypted_init_file"; then
@@ -466,10 +479,14 @@ background_init_and_unseal() {
     fi
     _log DEBUG "Vault status: $status_output"
 
-    if [ "$OPENBAO_RUN_SETUP" = true ]; then
+if [ "$OPENBAO_RUN_SETUP" = true ]; then
         _log INFO "Running openbao_setup.sh to configure policies and secret engines..."
-#        . /usr/local/bin/openbao_setup.sh --all
-        eval "/usr/local/bin/openbao_setup.sh --all"
+        # Mount YAML if not exists (for idempotency)
+        if [ ! -f /vault/config/openbao_config.yml ]; then
+            _log WARN "openbao_config.yml not mounted; skipping idempotent setup."
+        else
+            eval "/usr/local/bin/openbao_setup.sh"
+        fi
         if [ $? -ne 0 ]; then
             _log ERROR "openbao_setup.sh failed."
             _log DEBUG "Server log contents:"

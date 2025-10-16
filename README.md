@@ -200,6 +200,29 @@ docker compose exec openbao vault token create -policy=admin
 ```
 Use the generated admin token for regular operations.
 
+## Idempotent Configuration
+
+The image now supports idempotent setup via `openbao_config.yml` (mounted at `/vault/config/openbao_config.yml`). On startup, `openbao_setup.sh` invokes `openbao_idempotent_setup.py` to:
+
+- Ensure policies from YAML `policies` dict (HCL content).
+- Create/update users in `userpass` auth (check vaulted JSON/API; recreate if needed, store password).
+- Create token roles (check vaulted JSON/API; recreate if invalid, store by policy key).
+
+Example `openbao_config.yml` (see repo).
+
+Vaulted JSON now includes `"users": {"display_name": "password"}` and `"tokens": {"policy": "token"}`.
+
+Mount in docker-compose.yml:
+```yaml
+volumes:
+  - ./openbao_config.yml:/vault/config/openbao_config.yml:ro
+```
+
+## Updated Tests
+
+Existing tests unchanged (no regressions).
+New: Idempotent startup, removal/restart recreation, modification/enforcement.
+
 ### Next Steps
 Now that your OpenBao instance is up, unsealed, and securely accessible, you can start leveraging its power! Here are some common next steps:
 
@@ -234,7 +257,7 @@ curl -v -k -H "X-Vault-Token: ${ROOT_TOKEN}" \
 "http://localhost/v1/sys/mounts/secret"
 ```
 
-Configure Auth Methods: Beyond tokens, you'll want to configure authentication methods for your users and applications. Common ones include Username/Password, LDAP, GitHub, or Kubernetes.
+Configure Auth Methods: Beyond token roles, you'll want to configure authentication methods for your users and applications. Common ones include Username/Password, LDAP, GitHub, or Kubernetes.
 
 Write Policies: Define access control policies to determine what users and applications can do within OpenBao (e.g., read specific secrets, manage certain paths).
 

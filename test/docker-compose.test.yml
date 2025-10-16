@@ -49,9 +49,7 @@ services:
       - ${OPENBAO_TEST_DIR}/group:/etc/group:ro
     healthcheck:
       test: ["CMD-SHELL", "openbao_info --is-vault-ready"]
-#      test: ["CMD-SHELL", "test -f ${OPENBAO_CONTAINER_HOME_DIR}/config/.setup_completed"]
-#      test: ["CMD-SHELL", "bao status > ${OPENBAO_CONTAINER_HOME_DIR}/logs/healthcheck_output 2>&1 && grep -q 'Sealed.*false' ${OPENBAO_CONTAINER_HOME_DIR}/logs/healthcheck_output"]
       interval: 10s
       timeout: 10s
-      retries: 5
-      start_period: 360s
+      retries: 10
+      start_period: 30s

@@ -2,6 +2,8 @@ private/***
 vault/***
 archive/***
 save/***
+.test/***
+.test-results/***
 vault.yml
 *vault.yml
 secrets.yml

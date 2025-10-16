@@ -1,0 +1,29 @@
+# Example YAML (new file in repo root for tests)
+policies:
+  admin:
+    hcl_content: |
+      path "*" {
+        capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+      }
+  user:
+    hcl_content: |
+      path "secret/*" {
+        capabilities = ["create", "read", "update", "delete", "list"]
+      }
+      path "userpass/users/{{identity.entity.name}}" {
+        capabilities = ["read"]
+      }
+
+users:
+  - display_name: test_user
+    password: test_password
+    policies:
+      - user
+
+tokens:
+  - display_name: admin
+    policies:
+      - admin
+  - display_name: test_user
+    policies:
+      - user

@@ -52,6 +52,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      ## ref: https://stackoverflow.com/questions/60942067/get-current-date-and-time-in-github-workflows
+      - name: Get current date
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y%m%d')"
+
       # Set a unique build ID for the current matrix version
       - name: Set unique build ID
         id: set-build-id
@@ -66,6 +71,7 @@ jobs:
           build-args: |
             OPENBAO_VERSION=${{ matrix.versions.version }}
             BUILD_ID=${{ env.BUILD_ID }}
+            BUILD_DATE=${{ steps.date.outputs.date }}
           # Now, we push the image with multiple tags.
           push: false
           # This is the key change to make the image available for testing and subsequent push
@@ -74,6 +80,7 @@ jobs:
             ${{ env.DOCKER_IMAGE }}:${{ matrix.versions.version }}
             ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
             ${{ env.DOCKER_IMAGE }}:${{ env.BUILD_ID }}
+            ${{ env.DOCKER_IMAGE }}:${{ steps.date.outputs.date }}
 
       - name: Run Test Suite
         run: |

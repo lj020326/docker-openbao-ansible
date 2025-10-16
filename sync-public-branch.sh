@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION="2025.9.17"
+VERSION="2025.10.16"
 
 GIT_DEFAULT_BRANCH=main
 GIT_PUBLIC_BRANCH=public
@@ -21,6 +21,7 @@ CONFIRM=0
 REPO_DIR="$(cd "${SCRIPT_DIR}" && git rev-parse --show-toplevel)"
 
 PUBLIC_GITIGNORE=.gitignore.pub
+PUBLIC_GITMODULES=.gitmodules.pub
 
 ## ref: https://stackoverflow.com/questions/53839253/how-can-i-convert-an-array-into-a-comma-separated-string
 declare -a EXCLUDES_ARRAY
@@ -421,7 +422,8 @@ sync_public_branch() {
     fi
 
     log_info "Pulling latest changes from the public branch."
-    local REMOTE_AND_BRANCH=$(git rev-parse --abbrev-ref "${PUBLIC_BRANCH}@{upstream}") && \
+    local REMOTE_AND_BRANCH
+    REMOTE_AND_BRANCH=$(git rev-parse --abbrev-ref "${PUBLIC_BRANCH}@{upstream}") && \
     IFS=/ read -r REMOTE_NAME REMOTE_BRANCH <<< "${REMOTE_AND_BRANCH}" && \
 
     if [[ -z "${REMOTE_BRANCH}" ]]; then
@@ -432,7 +434,7 @@ sync_public_branch() {
             log_warn "Failed to pull from ${REMOTE_NAME}/${REMOTE_BRANCH}:${PUBLIC_BRANCH}. Continuing anyway."
         fi
     fi
-    
+
     log_info "Syncing temporary directory to public branch."
 
     if [ "${GIT_REMOVE_CACHED_FILES}" -eq 1 ]; then
@@ -463,12 +465,21 @@ sync_public_branch() {
       fi
     fi
 
+    if [ -n "${PUBLIC_GITMODULES}" ]; then
+      if [ -e "${PUBLIC_GITMODULES}" ]; then
+        echo "Update public submodules:"
+        cp -p $PUBLIC_GITMODULES .gitmodules
+        git submodule deinit -f . && \
+        git submodule update --init --recursive --remote
+      fi
+    fi
+
     log_info "Show changes before push:"
     git status
 
     ## https://stackoverflow.com/questions/5989592/git-cannot-checkout-branch-error-pathspec-did-not-match-any-files-kn
     ## git diff --name-only ${GIT_PUBLIC_BRANCH} ${GIT_DEFAULT_BRANCH} --
-  
+
     if [ $CONFIRM -eq 0 ]; then
       ## https://www.shellhacks.com/yes-no-bash-script-prompt-confirmation/
       read -p "Are you sure you want to merge the changes above to public branch ${TARGET_BRANCH}? " -n 1 -r
@@ -478,7 +489,7 @@ sync_public_branch() {
           exit 1
       fi
     fi
-  
+
     ## https://stackoverflow.com/questions/5738797/how-can-i-push-a-local-git-branch-to-a-remote-with-a-different-name-easily
     log_info "Add all the files:"
     git_commit_push
@@ -489,6 +500,13 @@ sync_public_branch() {
     log_info "Returning to the original branch and applying stashed changes."
     if ! git -C "${REPO_DIR}" checkout -; then
         log_error "Failed to checkout original branch."
+    fi
+
+    if [ -e .gitmodules ]; then
+      echo "Resetting ansible submodule for private"
+      git submodule deinit -f . && \
+      git submodule update --init --recursive --remote && \
+      git_commit_push
     fi
 
     log_info "Returning to the original branch and applying stashed changes."

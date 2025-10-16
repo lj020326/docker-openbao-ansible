@@ -1,17 +1,17 @@
 ---
-pipeline:
-  alwaysEmailList: ljohnson@dettonville.org
-  runInParallel: true
-  maxRandomDelaySeconds: 60
+alwaysEmailList: ljohnson@dettonville.org
+runInParallel: true
+maxRandomDelaySeconds: 60
+copyChildJobArtifacts: true
 
-  buildImageName: "openbao-ansible"
-  buildDir: "image"
+buildImageName: "openbao-ansible"
+buildDir: "image"
 
-  buildArgs:
-    IMAGE_REGISTRY: media.johnson.int:5000
+buildArgs:
+  IMAGE_REGISTRY: media.johnson.int:5000
 
-  buildTestAppendIdArg: true
-  buildTestAppendIdOption: "--build-id"
+buildTestAppendIdArg: true
+buildTestAppendIdOption: "--build-id"
 
 #  buildTestCommand: |
 #    test/test-openbao-container.sh \
@@ -19,21 +19,22 @@ pipeline:
 #      --skip-build \
 #      --test-results-dir '.test-results'
 
-  buildTestCommand: test/test-openbao-container.sh -x --junit --skip-build --test-results-dir '.test-results'
+#buildTestCommand: test/test-openbao-container.sh -x --junit --skip-build --test-results-dir '.test-results'
+buildTestCommand: test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
 
 #  testResultsPath: ".test-results/test-results.log"
-  testResultsPath: ".test-results/*"
+testResultsPath: ".test-results/*"
 
-  buildImageList:
-    - buildArgs:
-        OPENBAO_VERSION: "2.3.2"
-      buildTags:
-        - "2.3.2"
-    - buildArgs:
-        OPENBAO_VERSION: "2.2"
-      buildTags:
-        - "2.2"
-    - buildArgs:
-        OPENBAO_VERSION: "latest"
-      buildTags:
-        - latest
+buildImageList:
+  - buildArgs:
+      OPENBAO_VERSION: "2.3.2"
+    buildTags:
+      - "2.3.2"
+  - buildArgs:
+      OPENBAO_VERSION: "2.2"
+    buildTags:
+      - "2.2"
+  - buildArgs:
+      OPENBAO_VERSION: "latest"
+    buildTags:
+      - latest

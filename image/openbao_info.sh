@@ -141,8 +141,8 @@ case "$OPERATION_FLAG" in
     ;;
   --content)
     decrypt_init_json
-    log_message "--- Content of decrypted init.json ---"
-    cat "$DECRYPTED_FILE"
+    log_message "--- Content of decrypted init.json (enhanced) ---"
+    cat "$DECRYPTED_FILE"  # Now shows users/tokens
     ;;
   --root-token)
     decrypt_init_json
@@ -150,7 +150,7 @@ case "$OPERATION_FLAG" in
     ;;
   --admin-token)
     decrypt_init_json
-    jq -r '.admin_token' "$DECRYPTED_FILE"
+    jq -r '.tokens.admin' "$DECRYPTED_FILE"
     ;;
   --unseal-keys)
     decrypt_init_json
