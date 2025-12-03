@@ -2,7 +2,7 @@
 
 # OpenBao Enhanced Docker Image with Ansible Vault
 
-This Docker image extends the official `openbao/openbao:2.3.2` image to provide a secure, automated setup for running an OpenBao server with initialization and auto-unsealing, using Ansible Vault to encrypt sensitive initialization data. The image is designed to run as a non-root user (`openbao`, UID=1102, GID=1102) and avoids requiring `chown` or root privileges at runtime, adhering to Docker security best practices.
+This Docker image extends the official `openbao/openbao` image to provide a secure, automated setup for running an OpenBao server with initialization and auto-unsealing, using Ansible Vault to encrypt sensitive initialization data. The image is designed to run as a non-root user (`openbao`, UID=1102, GID=1102) and avoids requiring `chown` or root privileges at runtime, adhering to Docker security best practices.
 
 ## Features
 - **Automated Initialization and Unsealing**: Initializes the OpenBao vault on first run and auto-unseals it using stored keys. On restarts, detects an initialized vault and unseals without reinitialization.
