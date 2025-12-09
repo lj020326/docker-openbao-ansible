@@ -35,6 +35,76 @@ echo "OpenBao Container ID: ${CONTAINER_ID}"
 docker exec -it "${CONTAINER_ID}" sh -c 'openbao_info --content'
 docker exec -it "${CONTAINER_ID}" sh
 / $ bao login s.tokenvaluehere
+## list the existing tokens
+/ $ bao list auth/token/accessors
+Keys
+----
+7QXrR8WEOINnhVwqdqOWIF0u
+8QAJmBKmg2AdSc8goILur5Qe
+OdZkGoVh6wZm5VxGvq1lWxnD
+/ $ 
+## get the token information
+/ $ bao token lookup -accessor 7QXrR8WEOINnhVwqdqOWIF0u
+Key                 Value
+---                 -----
+accessor            7QXrR8WEOINnhVwqdqOWIF0u
+creation_time       1765001453
+creation_ttl        168h
+display_name        userpass-test_user
+entity_id           52ae335c-8f1d-336c-9d6f-e51ae12f19af
+expire_time         2025-12-13T01:10:53.922626206-05:00
+explicit_max_ttl    0s
+id                  n/a
+issue_time          2025-12-06T01:10:53.922629993-05:00
+meta                map[username:test_user]
+num_uses            0
+orphan              true
+path                auth/userpass/login/test_user
+policies            [default user]
+renewable           true
+ttl                 85h13m50s
+type                service
+/ $ 
+/ $ bao token lookup -accessor 8QAJmBKmg2AdSc8goILur5Qe
+Key                 Value
+---                 -----
+accessor            8QAJmBKmg2AdSc8goILur5Qe
+creation_time       1765293475
+creation_ttl        24h
+display_name        token-admin-renewed
+entity_id           n/a
+expire_time         2025-12-10T10:17:55.59609141-05:00
+explicit_max_ttl    0s
+id                  n/a
+issue_time          2025-12-09T10:17:55.596094987-05:00
+meta                <nil>
+num_uses            0
+orphan              false
+path                auth/token/create
+policies            [admin default]
+renewable           true
+ttl                 22h20m28s
+type                service
+/ $ 
+/ $ bao token lookup -accessor OdZkGoVh6wZm5VxGvq1lWxnD
+Key                 Value
+---                 -----
+accessor            OdZkGoVh6wZm5VxGvq1lWxnD
+creation_time       1764947570
+creation_ttl        0s
+display_name        root
+entity_id           n/a
+expire_time         <nil>
+explicit_max_ttl    0s
+id                  n/a
+meta                <nil>
+num_uses            0
+orphan              true
+path                auth/token/root
+policies            [root]
+ttl                 0s
+type                service
+/ $
 / $ bao secrets list -format=json
 ## The pki/ mount (description: PKI secrets engine for Root CA) is a legacy or misconfigured mount in this case.
 ## If it’s not used, disable it to avoid confusion:
@@ -181,7 +251,7 @@ $ run_docker_compose up -d openbao-test
 $ run_docker_compose logs -f openbao-test
 $ 
 $ 
-$ CONTAINER_ID=$(docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/.env.test ps -q openbao-test)
+$ CONTAINER_ID=$(docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/test/.env.test ps -q openbao-test)
 $ echo "CONTAINER_ID=${CONTAINER_ID}"
 $ docker logs "$CONTAINER_ID" 2>&1 | grep -i "openbao_setup.sh"
 $ 

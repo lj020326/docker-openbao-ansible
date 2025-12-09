@@ -150,7 +150,7 @@ case "$OPERATION_FLAG" in
     ;;
   --admin-token)
     decrypt_init_json
-    jq -r '.tokens.admin' "$DECRYPTED_FILE"
+    jq -r '.tokens.admin.token' "$DECRYPTED_FILE"
     ;;
   --unseal-keys)
     decrypt_init_json

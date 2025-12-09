@@ -4,8 +4,10 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
-DOCKER_BUILD_DIR="$(dirname "${SCRIPT_DIR}")/image"
+DOCKER_BUILD_DIR="${PROJECT_DIR}/image"
+DOCKER_TEST_DIR="${PROJECT_DIR}/test"
 BUILD_COMPOSE_FILE="${DOCKER_BUILD_DIR}/docker-compose.build.yml"
 DOCKER_COMPOSE_TARGET_FILE="${SCRIPT_DIR}/docker-compose.test.yml"
 
@@ -19,14 +21,14 @@ TARGET_TEST="" # NEW: Holds the function name or index (1-based) of the test to 
 # --- Configuration ---
 # Define tests as array for easy extension (name, command)
 TESTS=(
-    "Test 1: Initial Container Startup and State Management" "test_initialization"
-    "Test 2: Setup Validation" "test_setup_validation"
-    "Test 3: Auto-Unseal and Container Resilience" "test_auto_unseal"
-    "Test 4: Data Integrity and Accessibility" "test_data_integrity"
-    "Test 5: External Service Connectivity" "test_external_connectivity"
-    "Test 6: Idempotent Initial Startup" "test_idempotent_initial_startup"
-    "Test 7: Idempotent Removal Restart" "test_idempotent_removal_restart"
-    "Test 8: Idempotent Modification Restart" "test_idempotent_modification_restart"
+    "Initial Container Startup and State Management" "test_initialization"
+    "Setup Validation" "test_setup_validation"
+    "Auto-Unseal and Container Resilience" "test_auto_unseal"
+    "Data Integrity and Accessibility" "test_data_integrity"
+    "External Service Connectivity" "test_external_connectivity"
+    "Idempotent Initial Startup" "test_idempotent_initial_startup"
+    "Idempotent Removal Restart" "test_idempotent_removal_restart"
+    "Idempotent Modification Restart" "test_idempotent_modification_restart"
 )
 
 ## Use the `OPENBAO_TEST_BUILD_ID` (e.g., '2025094321') in CICD pipelines for specific build
@@ -271,6 +273,8 @@ function generate_openbao_config() {
   },
   "default_lease_ttl": "168h",
   "max_lease_ttl": "720h",
+  "token_ttl": "87600h",
+  "token_max_ttl": "876000h",
   "ui": true
 }
 EOF
@@ -278,7 +282,7 @@ EOF
     chmod 644 "${OPENBAO_TEST_CONFIG_FILE}"
     log_info "Generated ${OPENBAO_TEST_CONFIG_FILE}"
 
-    cp -p test/openbao_config.yml "${OPENBAO_TEST_SETUP_CONFIG_FILE}"
+    cp -p "${DOCKER_TEST_DIR}/openbao_config.yml" "${OPENBAO_TEST_SETUP_CONFIG_FILE}"
     log_info "Generated ${OPENBAO_TEST_SETUP_CONFIG_FILE}"
 }
 
@@ -403,11 +407,12 @@ function print_test_cases() {
 
 # Function to report result
 function add_test_result() {
-    local test_name="$1"
-    local failed="$2"
-    local message="$3"
+    local test_index="$1"
+    local test_name="$2"
+    local failed="$3"
+    local message="$4"
     local escaped_message=$(echo "${message}" | sed 's/\"/\\\"/g')
-    TEST_RESULTS+=("{\"test_name\": \"${test_name}\", \"failed\": ${failed}, \"message\": \"${escaped_message}\"}")
+    TEST_RESULTS+=("{\"test_index\": \"${test_index}\", \"test_name\": \"${test_name}\", \"failed\": ${failed}, \"message\": \"${escaped_message}\"}")
 }
 
 # --- End Utility Functions ---
@@ -699,8 +704,9 @@ function test_idempotent_initial_startup() {
     log_info "Verify tokens length"
     local content=$(exec_in_container openbao_info --content)
     local token_length=$(echo "$content" | jq '.tokens | length')
-    if [ "$token_length" -ne 2 ]; then
-        log_error "Token roles not configured (expected 2)."
+    local expected_number_of_tokens=3
+    if [ "$token_length" -ne "${expected_number_of_tokens}" ]; then
+        log_error "Token roles not configured (expected ${expected_number_of_tokens})."
         return 1
     fi
     log_info "Test passed: Initial idempotent setup."
@@ -775,9 +781,10 @@ function test_idempotent_modification_restart() {
 # --- Core Functions ---
 
 function run_test() {
-    local test_name="$1"
-    local test_command="$2"
-    log_step "Running Test: $test_name"
+    local test_index="$1"
+    local test_name="$2"
+    local test_command="$3"
+    log_step "Running Test: $test_index: $test_name"
     log_info "Executing command: $test_command"
 
     local message=""
@@ -788,23 +795,23 @@ function run_test() {
     docker_compose_up
     wait_for_container_health || {
         message="healthcheck before running test '$test_name' failed. Check logs for details."
-        add_test_result "${test_name}" "${failed}" "${message}"
+        add_test_result "${test_index}" "${test_name}" "${failed}" "${message}"
         return 1
     }
     if eval "$test_command"; then
         failed="false"
-        message="Test passed successfully."
+        message="Test '$test_index' passed successfully."
     else
-        message="Test '$test_name' failed. Check logs for details."
+        message="Test '$test_index' failed. Check logs for details."
     fi
 
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
 
-    log_info "Test finished in ${duration} seconds. Failed: ${failed}"
+    log_info "Test '$test_index' finished in ${duration} seconds. Failed: ${failed}"
 
     # Store results for final report
-    add_test_result "${test_name}" "${failed}" "${message}"
+    add_test_result "${test_index}" "${test_name}" "${failed}" "${message}"
     if [ "${failed}" == "true" ]; then
         return 1
     fi
@@ -840,12 +847,12 @@ function run_all_tests() {
 
         log_info "--- Running Test ${test_index}/${total_tests}: ${test_name} ---"
 
-        run_test "$test_name" "$test_function"
+        run_test "${test_index}" "${test_name}" "${test_function}"
         local test_rc=$?
         overall_failed=$((${overall_failed} + ${test_rc}))
 
         if [ $FAIL_FAST -eq 1 ] && [ $test_rc -ne 0 ]; then
-            log_error "Fail-fast triggered: Stopping after $test_name failure."
+            log_error "Fail-fast triggered: Stopping after ${test_name} failure."
             break  # Stop loop on first failure
         fi
         # For FAIL_FAST=0, continue (run_test already ||-ed internally if needed)

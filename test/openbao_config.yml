@@ -5,6 +5,17 @@ policies:
       path "*" {
         capabilities = ["create", "read", "update", "delete", "list", "sudo"]
       }
+  deploy-ca:
+    hcl_content: |
+      path "pki-intermediate/*" {
+        capabilities = ["read", "list"]
+      }
+      path "kv/data/trusted_external" {
+        capabilities = ["read"]
+      }
+      path "auth/token/lookup*" {
+        capabilities = ["read"]
+      }
   user:
     hcl_content: |
       path "secret/*" {
@@ -22,8 +33,11 @@ users:
 
 tokens:
   - display_name: admin
-    policies:
-      - admin
+    policies: ["admin"]
+    ttl: "87600h"  # 10y, matching CA
+  - display_name: deploy-ca
+    policies: ["deploy-ca"]
+    ttl: "87600h"
   - display_name: test_user
-    policies:
-      - user
+    policies: ["user"]
+    ttl: "168h"  # 1w

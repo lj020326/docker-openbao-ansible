@@ -18,7 +18,8 @@ python /usr/local/bin/openbao_idempotent_setup.py \
   --config /vault/config/openbao_config.yml \
   --vault-addr "${VAULT_ADDR}" \
   --root-token "$(openbao_info --root-token)" \
-  --vault-json /vault/config/init.json
+  --vault-json /vault/config/init.json \
+  || echo "Idempotent setup failed, but server up"
 
 local_py_exit=$?
 if [ $local_py_exit -ne 0 ]; then

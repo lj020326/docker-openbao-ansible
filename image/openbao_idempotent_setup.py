@@ -8,8 +8,18 @@ import subprocess
 import sys
 import traceback
 import yaml
+from datetime import datetime
 from hvac import Client
-from hvac.exceptions import InvalidPath, InvalidRequest
+#from hvac.exceptions import InvalidPath, InvalidRequest
+#import hvac.exceptions
+
+# Existing hvac exceptions (expand as needed)
+from hvac.exceptions import (
+    Forbidden,
+    InvalidRequest,
+    InvalidPath,
+    # Add others if needed: InternalServerError, etc.
+)
 
 # __scriptName__ = sys.argv[0]
 __scriptName__ = os.path.basename(sys.argv[0])
@@ -234,26 +244,42 @@ def ensure_token_role(client, role_name, token_policies, token_ttl='768h'):
 
 
 # Idempotent token creation
-def ensure_token(client, vault_data, display_name, policies):
-    token_key = display_name
-
+def ensure_token(client, vault_data, token_name, policies, ttl='24h'):
+    """
+        Ensure a token exists and is valid. Recreate if lookup fails (e.g., expired).
+    """
     vault_data['tokens'] = vault_data.get('tokens', {})
 
-    if token_key in vault_data['tokens']:
+    if token_name in vault_data['tokens']:
+        token = vault_data['tokens'][token_name]['token']
         try:
             # Verify via hvac lookup_token
-            client.auth.token.lookup(vault_data['tokens'][token_key])
+            client.auth.token.lookup(token)
             logger.info(f"Token verified")
             return vault_data  # Return unchanged
-        except InvalidRequest:
+        except (Forbidden, InvalidRequest) as e:
             logger.warning(f"Token invalid; recreating...")
+            if "bad token" in str(e):
+                logger.warning(f"Token '{token_name}' invalid (bad/expired). Recreating...")
+            else:
+                raise  # Re-raise non-bad-token errors
 
-    # Create token with longer TTL for tests
-    token_resp = client.auth.token.create(ttl='24h', policies=policies, display_name=display_name)
-    new_token = token_resp['auth']['client_token']
+    logger.info(f"Create new token")
+    create_params = {
+        'policies': policies,
+        'ttl': ttl,
+        'display_name': f"{token_name}"
+    }
+    create_token_result = client.auth.token.create(**create_params)
+    new_token = create_token_result['auth']['client_token']
     
-    # Merge into vault_data and return
-    vault_data['tokens'][token_key] = new_token
+    # # Merge into vault_data and return
+    # vault_data['tokens'][token_name] = new_token
+    logger.info(f"Update vault_data")
+    vault_data['tokens'][token_name] = {
+        'token': new_token,
+        'created_at': datetime.utcnow().isoformat()
+    }
     logger.info(f"Created token: {new_token}")
     return vault_data
 
@@ -323,7 +349,7 @@ def main():
     if 'tokens' in config:
         logger.info("Ensuring tokens...")
         for token_cfg in config['tokens']:
-            vault_data = ensure_token(client, vault_data, token_cfg['display_name'], token_cfg['policies'])
+            vault_data = ensure_token(client, vault_data, token_cfg['display_name'], token_cfg['policies'], token_cfg['ttl'])
 
     # 8. Create/Update Userpass Users
     if 'users' in config:
@@ -372,9 +398,14 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception as e:
+    except (argparse.ArgumentError, ValueError, InvalidRequest, subprocess.CalledProcessError, Forbidden) as e:
         logger.critical(f"A critical error occurred: {e}")
-        # Print stack trace only for unexpected errors
-        if not isinstance(e, (argparse.ArgumentError, ValueError, InvalidPath, InvalidRequest, subprocess.CalledProcessError)):
-             traceback.print_exc(file=sys.stderr)
+        logger.exception("Full traceback:")
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
+    # except Exception as e:
+    #     logger.critical(f"A critical error occurred: {e}")
+    #     # Print stack trace only for unexpected errors
+    #     if not isinstance(e, (argparse.ArgumentError, ValueError, InvalidPath, InvalidRequest, subprocess.CalledProcessError)):
+    #          traceback.print_exc(file=sys.stderr)
+    #     sys.exit(1)
