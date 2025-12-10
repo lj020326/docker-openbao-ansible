@@ -251,7 +251,11 @@ def ensure_token(client, vault_data, token_name, policies, ttl='24h'):
     vault_data['tokens'] = vault_data.get('tokens', {})
 
     if token_name in vault_data['tokens']:
-        token = vault_data['tokens'][token_name]['token']
+        if 'token' in vault_data['tokens'][token_name]:
+            token = vault_data['tokens'][token_name]['token']
+        else:
+            logger.warning(f"using older formatting; upgrading to latest configuration format")
+            token = vault_data['tokens'][token_name]
         try:
             # Verify via hvac lookup_token
             client.auth.token.lookup(token)
