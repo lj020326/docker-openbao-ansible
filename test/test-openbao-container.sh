@@ -271,10 +271,8 @@ function generate_openbao_config() {
   "seal": {
     "shamir": {}
   },
-  "default_lease_ttl": "168h",
-  "max_lease_ttl": "720h",
-  "token_ttl": "87600h",
-  "token_max_ttl": "876000h",
+  "default_lease_ttl": "87600h",
+  "max_lease_ttl": "876000h",
   "ui": true
 }
 EOF

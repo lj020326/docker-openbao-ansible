@@ -259,7 +259,7 @@ def ensure_token(client, vault_data, token_name, policies, ttl='24h'):
         try:
             # Verify via hvac lookup_token
             client.auth.token.lookup(token)
-            logger.info(f"Token verified")
+            logger.info(f"Token '{token_name}' verified")
             return vault_data  # Return unchanged
         except (Forbidden, InvalidRequest) as e:
             logger.warning(f"Token invalid; recreating...")
@@ -284,7 +284,7 @@ def ensure_token(client, vault_data, token_name, policies, ttl='24h'):
         'token': new_token,
         'created_at': datetime.utcnow().isoformat()
     }
-    logger.info(f"Created token: {new_token}")
+    logger.info(f"Created '{token_name}' token: {new_token}")
     return vault_data
 
 
