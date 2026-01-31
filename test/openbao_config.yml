@@ -10,10 +10,46 @@ policies:
       path "pki-intermediate/*" {
         capabilities = ["read", "list"]
       }
-      path "kv/data/trusted_external" {
+      # issue/sign for deploys
+      path "pki-intermediate/issue/*" {
+        capabilities = ["create", "update"]
+      }
+      path "pki-intermediate/issue/internal-api" {
+        capabilities = ["create", "update"]
+      }
+      path "pki-intermediate/sign/*" {
+        capabilities = ["create", "update"]
+      }
+      path "pki-intermediate/config/*" {
         capabilities = ["read"]
       }
+      path "pki-intermediate/roles/*" {
+        capabilities = ["read"]
+      }
+      # Allow full access to the PKI KV Cache
+      path "secret/data/pki_cache/*" {
+        capabilities = ["create", "read", "update", "delete", "list"]
+      }
+      # If using KV version 1, or for listing metadata in KV version 2
+      path "secret/metadata/pki_cache/*" {
+        capabilities = ["list", "read"]
+      }
+      path "secret/data/trusted_internal/*" {
+        capabilities = ["read"]
+      }
+      path "secret/metadata/trusted_internal" {
+        capabilities = ["list"]
+      }
+      path "secret/data/trusted_external/*" {
+        capabilities = ["read"]
+      }
+      path "secret/metadata/trusted_external" {
+        capabilities = ["list"]
+      }
       path "auth/token/lookup*" {
+        capabilities = ["read"]
+      }
+      path "sys/mounts" {
         capabilities = ["read"]
       }
   user:

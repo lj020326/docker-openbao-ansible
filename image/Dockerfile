@@ -12,11 +12,15 @@ ARG BUILD_ID=devel
 LABEL build=$BUILD_ID
 
 # Install dependencies
-RUN apk add --no-cache curl
-RUN apk add --no-cache ansible
-RUN apk add --no-cache jq
-RUN apk add --no-cache python3 py3-pip py3-yaml
-RUN apk add --no-cache bash  # Added: For re-encryption subprocess
+RUN apk add --no-cache \
+    curl \
+    ansible \
+    jq \
+    python3 \
+    py3-pip \
+    py3-yaml \
+    bash \
+    openssl
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir hvac pyyaml
 
