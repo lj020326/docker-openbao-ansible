@@ -1,12 +1,18 @@
 name: Build, Test, and Push Docker image
 
 on:
+  # Allows manual triggering
+  workflow_dispatch:
   push:
     branches:
       - main
   pull_request:
     branches:
       - main
+  # Schedule run (once daily)
+  schedule:
+    ## Daily Docker Image Rebuild (10:29am daily)
+    - cron: '29 10 * * *'
 
 env:
   DOCKER_IMAGE: ${{ github.repository_owner }}/openbao-ansible
