@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Install the latest Python 3 version - required for "Run Test Suite"
       - name: Set up Python
@@ -50,13 +50,13 @@ jobs:
         uses: ahmadnassri/action-workflow-queue@v1
 
       - name: Login to DockerHub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       ## ref: https://stackoverflow.com/questions/60942067/get-current-date-and-time-in-github-workflows
       - name: Get current date
@@ -70,7 +70,7 @@ jobs:
 
       - name: Build image for version ${{ matrix.versions.version }}
         id: build-test-image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./image
           file: ./image/Dockerfile
