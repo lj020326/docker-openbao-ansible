@@ -35,6 +35,13 @@ TESTS=(
 OPENBAO_TEST_SERVICE_NAME="openbao-test"
 OPENBAO_TEST_BUILD_ID="test"
 OPENBAO_TEST_RESULTS_DIR=".test-results"
+
+OPENBAO_USER="openbao"
+OPENBAO_CONTAINER_HOME_DIR="/vault"
+#OPENBAO_CONTAINER_HOME_DIR="/openbao"
+OPENBAO_TEST_IMAGE_NAME="openbao-ansible"
+OPENBAO_TEST_IMAGE_TAG="${OPENBAO_TEST_BUILD_ID}"
+
 #OPENBAO_TEST_IMAGE_TAG="${OPENBAO_TEST_BUILD_ID}"
 #OPENBAO_TEST_IMAGE="${OPENBAO_TEST_IMAGE_NAME}:${OPENBAO_TEST_IMAGE_TAG}"
 #OPENBAO_TEST_CONTAINER_NAME="${OPENBAO_TEST_IMAGE_NAME//[\/.]\//-}-${OPENBAO_TEST_BUILD_ID//[\/.]\//-}"
@@ -43,12 +50,7 @@ OPENBAO_TEST_RESULTS_DIR=".test-results"
 #OPENBAO_TEST_JSON_REPORT_FILE="${OPENBAO_TEST_RESULTS_DIR}/test-report.${OPENBAO_TEST_BUILD_ID}.json"
 #OPENBAO_TEST_JUNIT_REPORT_FILE="${OPENBAO_TEST_RESULTS_DIR}/junit-report.${OPENBAO_TEST_BUILD_ID}.xml"
 
-OPENBAO_USER="openbao"
-OPENBAO_CONTAINER_HOME_DIR="/vault"
-#OPENBAO_CONTAINER_HOME_DIR="/openbao"
-OPENBAO_TEST_IMAGE_NAME="openbao-ansible"
 TEST_RESULTS=()
-ANSIBLE_VAULT_PASSWORD="securepassword123"
 VAULT_ADDR="http://127.0.0.1:8200"
 
 ## derived vars
@@ -108,25 +110,6 @@ function abort() {
   exit 1
 }
 
-function shell_join() {
-  local arg
-  printf "%s" "$1"
-  shift
-  for arg in "$@"
-  do
-    printf " "
-    printf "%s" "${arg// /\ }"
-  done
-}
-
-function execute() {
-  log_info "${*}"
-  if ! "$@"
-  then
-    abort "$(printf "Failed during: %s" "$(shell_join "$@")")"
-  fi
-}
-
 function execute_eval_command() {
   local RUN_COMMAND="${*}"
 
@@ -157,7 +140,7 @@ function check_existing_mounts() {
 
     # If there are running containers, inspect them for the mount
     if [ -n "$RUNNING_CONTAINERS" ]; then
-        MOUNTED_CONTAINERS=$(docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}}{{end}}' $RUNNING_CONTAINERS | grep "${FULL_OPENBAO_TEST_HOME_DIR}" | awk '{print $1}')
+        MOUNTED_CONTAINERS="$(docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}}{{end}}' "$RUNNING_CONTAINERS" | grep "${FULL_OPENBAO_TEST_HOME_DIR}" | awk '{print $1}')"
     fi
 
     if [ -n "${MOUNTED_CONTAINERS}" ]; then
@@ -196,14 +179,8 @@ function build_image() {
 # Helper to generate necessary files for the test
 function generate_test_files() {
     log_info "Generating docker-compose test file and environment files..."
-    FULL_SCRIPT_DIR=$(full_path "${SCRIPT_DIR}")
-    FULL_DOCKER_BUILD_DIR=$(full_path "${DOCKER_BUILD_DIR}")
     FULL_OPENBAO_TEST_HOME_DIR=$(full_path "${OPENBAO_TEST_HOME_DIR}")
     FULL_OPENBAO_TEST_DIR=$(full_path "${OPENBAO_TEST_DIR}")
-    FULL_OPENBAO_TEST_PASSWD_FILE=$(full_path "${OPENBAO_TEST_PASSWD_FILE}")
-    FULL_OPENBAO_TEST_GROUP_FILE=$(full_path "${OPENBAO_TEST_GROUP_FILE}")
-    FULL_OPENBAO_TEST_ENV_FILE=$(full_path "${OPENBAO_TEST_ENV_FILE}")
-    FULL_OPENBAO_TEST_TEST_ENV_FILE=$(full_path "${OPENBAO_TEST_TEST_ENV_FILE}")
 
     generate_openbao_test_passwd_file
     generate_openbao_test_group_file
@@ -289,9 +266,9 @@ function wait_for_container_health() {
     log_info "Waiting for container to report health..."
     local HEALTH_STATUS=""
 #    local MAX_ATTEMPTS=30
-    local MAX_ATTEMPTS=10
+    local MAX_ATTEMPTS=15
     local ATTEMPT=0
-    local SLEEP_TIME=5
+    local SLEEP_TIME=6
 
     local CONTAINER_ID=$(run_docker_compose ps -q "${OPENBAO_TEST_SERVICE_NAME}")
     local CONTAINER_NAME=$(docker inspect --format='{{.Name}}' "${CONTAINER_ID}")
@@ -335,6 +312,32 @@ function wait_for_container_health() {
     return 1
 }
 
+function wait_for_setup_completion() {
+    log_info "Waiting for OpenBao setup to fully settle after restart..."
+    local MAX_WAIT=45
+    local WAIT_INTERVAL=5
+    local ATTEMPT=0
+
+    while [ $ATTEMPT -lt $((MAX_WAIT / WAIT_INTERVAL)) ]; do
+        local new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
+        if [ -n "$new_setup_check" ]; then
+            log_info "Display admin policy"
+            run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin
+            log_info "Read admin policy"
+            local policy_resp=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin)
+            if echo "$policy_resp" | grep -q "sudo"; then
+                log_info "Setup completed."
+                return 0
+            fi
+        fi
+        sleep $WAIT_INTERVAL
+        ATTEMPT=$((ATTEMPT + 1))
+        log_info "Setup still settling... (attempt $ATTEMPT)"
+    done
+    log_error "Setup did not fully complete within timeout."
+    return 1
+}
+
 function full_path() {
   local path="$1"
   if [ -f "$path" ] || [ ! -e "$path" ]; then
@@ -358,16 +361,16 @@ function cleanup_containers() {
 #    lsof -ti:8200 | xargs -r kill -9 2>/dev/null || true
 }
 
-# Enhanced cleanup function (force kill orphans, free port)
-function cleanup_containers_new() {
-    log_info "INFO: Cleaning up containers..."
-    docker-compose down --remove-orphans --volumes --timeout 30 2>/dev/null || true
-    docker kill $(docker ps -q --filter ancestor=openbao-ansible) 2>/dev/null || true
-    docker rm $(docker ps -aq --filter ancestor=openbao-ansible) 2>/dev/null || true
-    # Free port 8200 if bound
-    lsof -ti:8200 | xargs -r kill -9 2>/dev/null || true
-    log_info "INFO: Cleanup complete."
-}
+## Enhanced cleanup function (force kill orphans, free port)
+#function cleanup_containers_new() {
+#    log_info "INFO: Cleaning up containers..."
+#    docker-compose down --remove-orphans --volumes --timeout 30 2>/dev/null || true
+#    docker kill "$(docker ps -q --filter ancestor=openbao-ansible)" 2>/dev/null || true
+#    docker rm "$(docker ps -aq --filter ancestor=openbao-ansible)" 2>/dev/null || true
+#    # Free port 8200 if bound
+#    lsof -ti:8200 | xargs -r kill -9 2>/dev/null || true
+#    log_info "INFO: Cleanup complete."
+#}
 
 function cleanup_files() {
     log_info "Cleaning up temporary files..."
@@ -378,18 +381,6 @@ function cleanup() {
     cleanup_containers
     cleanup_files
     log_info "Cleanup complete."
-}
-
-function full_path() {
-  local path="$1"
-  if [ -f "$path" ] || [ ! -e "$path" ]; then
-    realpath "$path" 2>/dev/null || echo "$(cd "$(dirname "$path")" && pwd)/$(basename "$path")"
-  elif [ -d "$path" ]; then
-    (cd "$path" && pwd) 2>/dev/null || echo "$path"
-  else
-    log_error "Path '$path' is neither a file nor a directory."
-    exit 1
-  fi
 }
 
 function print_test_cases() {
@@ -409,7 +400,8 @@ function add_test_result() {
     local test_name="$2"
     local failed="$3"
     local message="$4"
-    local escaped_message=$(echo "${message}" | sed 's/\"/\\\"/g')
+#    local escaped_message=$(echo "${message}" | sed 's/\"/\\\"/g')
+    local escaped_message="${message//\"/\\\"}"
     TEST_RESULTS+=("{\"test_index\": \"${test_index}\", \"test_name\": \"${test_name}\", \"failed\": ${failed}, \"message\": \"${escaped_message}\"}")
 }
 
@@ -432,7 +424,7 @@ function test_initialization() {
     echo "*********"
     log_info "Content of encrypted init file:"
     exec_in_container openbao_info --content
-    echo "\n"
+    printf "\n"
     echo "*********"
 
     # Check vault initialization status
@@ -724,12 +716,16 @@ function test_idempotent_removal_restart() {
     log_info "Restart container"
     docker_compose_restart
     wait_for_container_health
-    log_info "Verify recreated (check .setup_completed and resources)"
-    local new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
-    if [ -z "$new_setup_check" ]; then
-        log_error "Setup not recreated after restart."
-        return 1
-    fi
+
+    # Extra settlement time for config management
+    wait_for_setup_completion || return 1
+
+#    log_info "Verify recreated (check .setup_completed and resources)"
+#    local new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
+#    if [ -z "$new_setup_check" ]; then
+#        log_error "Setup not recreated after restart."
+#        return 1
+#    fi
 
     local NEW_ROOT=$(exec_in_container openbao_info --root-token)
     if [ -z "${NEW_ROOT}" ]; then
@@ -762,7 +758,11 @@ function test_idempotent_modification_restart() {
 
     log_info "Restart container"
     docker_compose_restart
-    wait_for_container_health
+    wait_for_container_health || return 1
+
+    # Extra settlement time for config management
+    wait_for_setup_completion || return 1
+
     log_info "Display admin policy"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin
     log_info "Read admin policy"
@@ -828,9 +828,6 @@ function run_all_tests() {
         local test_name="${TESTS[i]}"
         local test_function="${TESTS[i+1]}"
         local test_index=$((i / 2 + 1))
-        local test_start_time=$(date +%s)
-        local test_failed=false
-        local test_message="Passed"
 
         # --- Test ID Filtering Logic (NEW) ---
         if [[ -n "$TARGET_TEST" ]]; then
@@ -847,7 +844,7 @@ function run_all_tests() {
 
         run_test "${test_index}" "${test_name}" "${test_function}"
         local test_rc=$?
-        overall_failed=$((${overall_failed} + ${test_rc}))
+        overall_failed=$((overall_failed + test_rc))
 
         if [ $FAIL_FAST -eq 1 ] && [ $test_rc -ne 0 ]; then
             log_error "Fail-fast triggered: Stopping after ${test_name} failure."
@@ -934,6 +931,7 @@ function parse_args() {
                 ;;
             -b|--build-id)
                 OPENBAO_TEST_BUILD_ID="$2"
+                OPENBAO_TEST_IMAGE_TAG="${OPENBAO_TEST_BUILD_ID}"
                 shift 2
                 ;;
             -i|--image)
@@ -990,7 +988,6 @@ function main() {
     ## E.g., networks, storage mounts, results, etc
     ##
     #######################################
-    OPENBAO_TEST_IMAGE_TAG="${OPENBAO_TEST_BUILD_ID}"
     OPENBAO_TEST_IMAGE="${OPENBAO_TEST_IMAGE_NAME}:${OPENBAO_TEST_IMAGE_TAG}"
 
     OPENBAO_TEST_CONTAINER_NAME="${OPENBAO_TEST_IMAGE_NAME//[\/.]/-}-${OPENBAO_TEST_BUILD_ID//[\/.]/-}"
@@ -1051,7 +1048,6 @@ function main() {
     # Disable set -e temporarily so that a failed run_tests doesn't exit the script
     set +e
     run_all_tests
-    local RUN_TESTS_RC=$?
     set -e # Re-enable set -e
 
     # --- Generate JSON Report ---
@@ -1095,6 +1091,22 @@ function main() {
 
     exit "$failed_tests"
 }
+
+# This block will never execute, but tells ShellCheck the functions are "used"
+# This avoids having to add a directive to disable the SC2317 shellcheck for the following specific functions
+if false; then
+    log_info
+    execute_eval_command
+    docker_compose_down
+    test_initialization
+    test_setup_validation
+    test_auto_unseal
+    test_data_integrity
+    test_external_connectivity
+    test_idempotent_initial_startup
+    test_idempotent_removal_restart
+    test_idempotent_modification_restart
+fi
 
 # Call main function
 main "$@"

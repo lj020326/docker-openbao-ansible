@@ -10,6 +10,10 @@ buildDir: "image"
 buildArgs:
   IMAGE_REGISTRY: media.johnson.int:5000
 
+buildPlatforms:
+  - linux/amd64
+  - linux/arm64
+
 buildTestAppendIdArg: true
 buildTestAppendIdOption: "--build-id"
 
@@ -27,9 +31,17 @@ testResultsPath: ".test-results/*"
 
 buildImageList:
   - buildArgs:
-      OPENBAO_VERSION: "2.3.2"
+      OPENBAO_VERSION: "2.5.5"
     buildTags:
-      - "2.3.2"
+      - "2.5.5"
+  - buildArgs:
+      OPENBAO_VERSION: "2.4"
+    buildTags:
+      - "2.4"
+  - buildArgs:
+      OPENBAO_VERSION: "2.3"
+    buildTags:
+      - "2.3"
   - buildArgs:
       OPENBAO_VERSION: "2.2"
     buildTags:
