@@ -1,11 +1,11 @@
-# .github/build-config.yml
 versions:
-  - "2.5.5"
-  - "2.5"
-  - "2.4"
-  - "2.3"
-  - "2.2"
-  - "latest"
+  - version: "2.7"
+    labels: ["2.7", "latest"]
+  - version: "2.6"
+    labels: ["2.6"]
+  - version: "2.5"
+    labels: ["2.5"]
+
 platforms:
   - "linux/amd64"
   - "linux/arm64"

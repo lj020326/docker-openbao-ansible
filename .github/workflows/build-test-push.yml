@@ -18,38 +18,51 @@ env:
   DOCKER_IMAGE: ${{ github.repository_owner }}/openbao-ansible
 
 jobs:
-  # 1. Parse the YAML configuration file
+  # 1. Parse build-config.yml and generate matrix mapping platforms to native runners
   setup:
     name: Initialize Matrix Configuration
     runs-on: ubuntu-latest
     outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
       versions: ${{ steps.set-matrix.outputs.versions }}
-      platforms: ${{ steps.set-matrix.outputs.platforms }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: Load Build Parameters
+      - name: Load Build Parameters & Derive Runners
         id: set-matrix
         run: |
-          # Read arrays from YAML file and convert them to compact JSON arrays
           VERSIONS_JSON=$(yq -o=json -I=0 '.versions' .github/build-config.yml)
           PLATFORMS_JSON=$(yq -o=json -I=0 '.platforms' .github/build-config.yml)
-          
-          echo "versions=${VERSIONS_JSON}" >> $GITHUB_OUTPUT
-          echo "platforms=${PLATFORMS_JSON}" >> $GITHUB_OUTPUT
 
-  # 2. Build and test each platform in parallel
+          # Matrix only pairs version strings with platforms (no label expansion here)
+          MATRIX_JSON=$(jq -c -n \
+            --argjson versions "$VERSIONS_JSON" \
+            --argjson platforms "$PLATFORMS_JSON" \
+            '[
+              $versions[] as $v_obj |
+              $platforms[] as $p |
+              {
+                version: $v_obj.version,
+                platform: $p,
+                runner: (if $p == "linux/arm64" then "ubuntu-24.04-arm" else "ubuntu-latest" end)
+              }
+            ]'
+          )
+
+          echo "matrix=${MATRIX_JSON}" >> $GITHUB_OUTPUT
+          echo "versions=${VERSIONS_JSON}" >> $GITHUB_OUTPUT
+
+  # 2. Build and test each matrix combination natively in parallel
   build-and-test:
-    name: Build & Test (${{ matrix.version }} / ${{ matrix.buildPlatforms }})
+    name: Build & Test (${{ matrix.version }} / ${{ matrix.platform }})
     needs: setup
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
       matrix:
-        version: ${{ fromJson(needs.setup.outputs.versions) }}
-        buildPlatforms: ${{ fromJson(needs.setup.outputs.platforms) }}
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     # Add necessary permissions for the workflow token
     permissions:
@@ -76,10 +89,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      # Set up QEMU for multi-architecture emulation (Required for linux/arm64 on ubuntu-latest)
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -92,22 +101,22 @@ jobs:
       - name: Set unique build ID
         id: set-build-id
         run: |
-          PLATFORM_CLEAN=$(echo "${{ matrix.buildPlatforms }}" | sed 's/\//-/g')
+          PLATFORM_CLEAN=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
           echo "BUILD_ID=${{ matrix.version }}-build-${{ github.run_number }}-${PLATFORM_CLEAN}" >> $GITHUB_ENV
 
-      - name: Build image for version ${{ matrix.version }} (${{ matrix.buildPlatforms }})
+      - name: Build image for version ${{ matrix.version }} (${{ matrix.platform }})
         id: build-test-image
         uses: docker/build-push-action@v7
         with:
           context: ./image
           file: ./image/Dockerfile
-          platforms: ${{ matrix.buildPlatforms }}
+          platforms: ${{ matrix.platform }}
           build-args: |
             OPENBAO_VERSION=${{ matrix.version }}
             BUILD_ID=${{ env.BUILD_ID }}
             BUILD_DATE=${{ steps.date.outputs.date }}
           push: false
-          # load: true exports the single-platform image to the runner's local docker daemon so your test script can run it
+          # load: true exports the built single-architecture image to the local Docker daemon
           load: true
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ env.BUILD_ID }}
@@ -116,7 +125,8 @@ jobs:
         run: |
           # The test script handles all Docker Compose commands.
           # It cleans up before and after the test run.
-          bash test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results' \
+          env OPENBAO_VERSION="${{ matrix.version }}" \
+            bash test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results' \
             --image-name ${{ env.DOCKER_IMAGE }} --build-id ${{ env.BUILD_ID }}
 
       - name: Show contents of .test-results/ directory
@@ -130,7 +140,7 @@ jobs:
         # This step runs even if the previous step failed, so we can always see the report.
         if: always()
         run: |
-          echo "### Test Results for OpenBao ${{ matrix.version }} (${{ matrix.buildPlatforms }})" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Results for OpenBao ${{ matrix.version }} (${{ matrix.platform }})" >> $GITHUB_STEP_SUMMARY
           echo "| Test Case | Failed |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           # Check if the file exists before attempting to process it
@@ -156,21 +166,18 @@ jobs:
         with:
           files: .test-results/*.xml
 
-  # 3. Push multi-arch image (only runs if ALL tests passed)
+  # 3. Push multi-arch manifest list (only runs if ALL tests passed)
   push-multi-arch:
-    name: Push Multi-arch (${{ matrix.version }})
-    needs: [setup, build-and-test]
+    name: Push Multi-arch (${{ matrix.versionObj.version }})
+    needs: [ setup, build-and-test ]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       matrix:
-        version: ${{ fromJson(needs.setup.outputs.versions) }}
+        versionObj: ${{ fromJson(needs.setup.outputs.versions) }}
 
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -183,7 +190,7 @@ jobs:
       - name: Set unique build ID
         id: set-build-id
         run: |
-          echo "BUILD_ID=${{ matrix.version }}-build-${{ github.run_number }}" >> $GITHUB_ENV
+          echo "BUILD_ID=${{ matrix.versionObj.version }}-build-${{ github.run_number }}" >> $GITHUB_ENV
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -191,20 +198,41 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Push multi-arch image for version ${{ matrix.version }}
+      - name: Prepare Docker Tags
+        id: prep-tags
+        run: |
+          IMAGE="${{ env.DOCKER_IMAGE }}"
+          BUILD_ID="${{ env.BUILD_ID }}"
+          SHA="${{ github.sha }}"
+          DATE="${{ steps.date.outputs.date }}"
+
+          TAGS_LIST=(
+            "$IMAGE:$BUILD_ID"
+            "$IMAGE:$SHA"
+            "$IMAGE:$DATE"
+          )
+
+          # Append each label from versionObj.labels
+          for label in $(echo '${{ toJson(matrix.versionObj.labels) }}' | jq -r '.[]'); do
+            TAGS_LIST+=("$IMAGE:$label")
+          done
+
+          # Write newline-separated tags to GITHUB_ENV
+          {
+            echo "TAGS<<EOF"
+            printf "%s\n" "${TAGS_LIST[@]}"
+            echo "EOF"
+          } >> $GITHUB_ENV
+
+      - name: Push multi-arch image for version ${{ matrix.versionObj.version }}
         uses: docker/build-push-action@v7
         with:
           context: ./image
           file: ./image/Dockerfile
-          # You can either join the platform array here or keep it hardcoded as it represents the multi-arch target
           platforms: linux/amd64,linux/arm64
           build-args: |
-            OPENBAO_VERSION=${{ matrix.version }}
+            OPENBAO_VERSION=${{ matrix.versionObj.version }}
             BUILD_ID=${{ env.BUILD_ID }}
             BUILD_DATE=${{ steps.date.outputs.date }}
           push: true
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.BUILD_ID }}
-            ${{ env.DOCKER_IMAGE }}:${{ matrix.version }}
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
-            ${{ env.DOCKER_IMAGE }}:${{ steps.date.outputs.date }}
+          tags: ${{ env.TAGS }}

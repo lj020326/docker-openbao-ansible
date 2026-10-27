@@ -16,7 +16,7 @@ This Docker image extends the official `openbao/openbao` image to provide a secu
 - **Encrypt/Decrypt JSON Storage for Root Token and Unseal Keys**:
   - OpenBao initialization now saves the unseal keys and the root token into a single init.json file.
   - This init.json file is then immediately encrypted using ansible-vault into init.json.enc, as long as ANSIBLE_VAULT_PASSWORD is set.
-  - The auto_unseal function now decrypts this init.json.enc file (if it exists) to retrieve the keys for unsealing. 
+  - The auto_unseal function now decrypts this init.json.enc file (if it exists) to retrieve the keys for unsealing.
 - **Utility Script "openbao_info"**: This script is enhanced to decrypt init.json.enc and provide two distinct functionalities:
   - --content: Displays the full content of the decrypted init.json, showing both unseal keys and the root token.
   - --root-token: Directly outputs only the root_token value, making it suitable for scripting (e.g., ROOT_TOKEN=$(docker exec ... openbao_info --root-token)). All debug output from the script is sent to stderr to keep stdout clean for the token.
@@ -161,7 +161,7 @@ docker-openbao-1   lj020326/openbao-ansible:latest   "/usr/local/bin/dock…"   
 Check the logs for initialization and unsealing status:
 ```bash
 $ docker logs -f docker-openbao-1
-$ ## or 
+$ ## or
 $ CONTAINER_ID=$(docker ps --filter "name=docker_stack_openbao" --format "{{.ID}}")
 $ docker logs -n 10 -f "${CONTAINER_ID}"
 $ docker exec -it "${CONTAINER_ID}" openbao_info --content
@@ -334,7 +334,7 @@ docker compose exec openbao vault kv get secret/test
     chmod 600 /home/container-user/docker/openbao/secrets/ansible_vault_password
     ```
 
-### 🚀 How to Use the Logging 
+### 🚀 How to Use the Logging
 
 **To change the log level:**
 

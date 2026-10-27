@@ -1,17 +1,21 @@
-ARG OPENBAO_VERSION="2.3.2"
-ARG OPENBAO_BUILD_IMAGE="openbao:${OPENBAO_VERSION}"
+# Use build args to allow custom tags or digests
+ARG OPENBAO_VERSION="latest"
 
 # ref: https://github.com/openbao/openbao/blob/main/scripts/docker/Dockerfile
 # Use a OpenBAO base image that matches the desired OpenBAO version
 # Extend the official OpenBao image
 FROM ghcr.io/openbao/openbao:${OPENBAO_VERSION}
 
+# Switch to root user to perform package installation and configuration
+USER root
+
 ARG BUILD_DATE
 ARG BUILD_ID=devel
 
-LABEL build=$BUILD_ID
+LABEL build="${BUILD_ID}"
 
 # Install dependencies
+# hadolint ignore=DL3018
 RUN apk add --no-cache \
     curl \
     ansible \
@@ -21,6 +25,7 @@ RUN apk add --no-cache \
     py3-yaml \
     bash \
     openssl
+
 RUN python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir hvac pyyaml
 
@@ -39,11 +44,13 @@ RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
     /usr/local/bin/openbao_idempotent_setup.py
 
 # Ensure /usr/local/bin is in PATH for openbao user
-#ENV PATH="/usr/local/bin:$PATH"
-ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH"
 ENV BUILD_DATE="${BUILD_DATE}"
 ENV BUILD_ID="${BUILD_ID}"
 
+# Return to non-root openbao user for runtime execution
+# prefer to use the logical owner name instead of numeric
 USER openbao
+
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-LABEL com.docker.compose.image.builder=classic
+LABEL com.docker.compose.image.builder="classic"

@@ -6,18 +6,18 @@ This guide details the process for running the OpenBao container test suite. The
 
 The testing workflow is managed by a single script, test/test_openbao_container.sh, which acts as the orchestrator. The key steps are:
 
-1. **UID/GID Detection**: The test script automatically detects the UID (User ID) and GID (Group ID) of the host user running the script.  
-2. **File Generation**: It dynamically generates passwd and group files, ensuring the openbao user inside the container is correctly mapped to your host user's UID and GID.  
-3. **Volume Permissions**: It uses sudo chown to set the correct permissions on the host volumes (openbao/home/) before they are mounted. This is a critical step for non-root container operation.  
+1. **UID/GID Detection**: The test script automatically detects the UID (User ID) and GID (Group ID) of the host user running the script.
+2. **File Generation**: It dynamically generates passwd and group files, ensuring the openbao user inside the container is correctly mapped to your host user's UID and GID.
+3. **Volume Permissions**: It uses sudo chown to set the correct permissions on the host volumes (openbao/home/) before they are mounted. This is a critical step for non-root container operation.
 4. **Docker Compose Execution**: The script then executes docker compose while passing the detected UID and GID as environment variables. The docker-compose.test.yml file is configured to receive these values, so it remains static and universal.
 
-Notes, in the test steps below, the ".test" directory is a temporary directory created to run through the test cycle and removed after. 
+Notes, in the test steps below, the ".test" directory is a temporary directory created to run through the test cycle and removed after.
 
 ## Build the test image
 
 ```shell
 $ docker compose --project-name openbao-ansible-test -f test/docker-compose.build.yml build --env OPENBAO_TEST_IMAGE=openbao:test
-$ 
+$
 ```
 
 ## debugging
@@ -42,7 +42,7 @@ Keys
 7QXrR8WEOINnhVwqdqOWIF0u
 8QAJmBKmg2AdSc8goILur5Qe
 OdZkGoVh6wZm5VxGvq1lWxnD
-/ $ 
+/ $
 ## get the token information
 / $ bao token lookup -accessor 7QXrR8WEOINnhVwqdqOWIF0u
 Key                 Value
@@ -64,7 +64,7 @@ policies            [default user]
 renewable           true
 ttl                 85h13m50s
 type                service
-/ $ 
+/ $
 / $ bao token lookup -accessor 8QAJmBKmg2AdSc8goILur5Qe
 Key                 Value
 ---                 -----
@@ -85,7 +85,7 @@ policies            [admin default]
 renewable           true
 ttl                 22h20m28s
 type                service
-/ $ 
+/ $
 / $ bao token lookup -accessor OdZkGoVh6wZm5VxGvq1lWxnD
 Key                 Value
 ---                 -----
@@ -136,7 +136,7 @@ Keys
 46b0e61b-0498-3f5e-4a25-c41615494679
 627570b1-6e16-d590-a4cb-0e629a0abd17
 c6bb2f87-6775-8db9-ba68-25c76c9f5402
-/ $ 
+/ $
 / $ bao read pki-intermediate/roles/internal-api
 Key                                   Value
 ---                                   -----
@@ -190,7 +190,7 @@ ttl                                   12h
 use_csr_common_name                   true
 use_csr_sans                          true
 use_pss                               false
-/ $ 
+/ $
 / $ bao read sys/mounts
 Key                  Value
 ---                  -----
@@ -219,7 +219,7 @@ OPENBAO_CONTAINER_HOME_DIR=/vault
 UID=$(id -u)
 GID=$(id -g)
 " > .test/.env.test
-$ 
+$
 $ ljohnson@lees-mbp:[docker-openbao](main)$ ./test/test-openbao-container.sh -j -k 2>&1 | tee test-log.txt
 INFO: --- Starting OpenBao Test Suite ---
 INFO: Command line arguments: -x -k
@@ -230,41 +230,41 @@ INFO: Detected host UID: 501, GID: 20
 $ ## with debug
 $ ljohnson@lees-mbp:[docker-openbao](main)$ ./test/test-openbao-container.sh -x -j -k 2>&1 | tee test-log.txt
 $ alias run_docker_compose="docker compose -f test/docker-compose.test.yml --env-file .test/test/.env.test"
-$ 
+$
 $ run_docker_compose up -d
 $ run_docker_compose up -d openbao-test
 $ run_docker_compose logs -n 10 -f openbao-test
-$ 
+$
 $ ## if project names are used as done within the test script then introspect to find the project name used
 $ ## list the docker projects to get the project name
 $ docker compose ls -a
-$ 
+$
 $ alias run_docker_compose="docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/test/.env.test"
-$ 
+$
 $ ./test/test-openbao-container.sh -j --image-name "lj020326/openbao-ansible" --build-id "build-44-2.3.2" -k 2>&1 | tee test-log.txt
 $ OPENBAO_TEST_BUILD_ID="test"
 $ PROJECT_NAME=$(docker compose ls -q | head -n 1)
 $ alias run_docker_compose="docker compose --project-name ${PROJECT_NAME} -f test/docker-compose.test.yml --env-file .test/${OPENBAO_TEST_BUILD_ID}/.env.test"
-$ 
+$
 $ run_docker_compose up -d
 $ run_docker_compose up -d openbao-test
 $ run_docker_compose logs -f openbao-test
-$ 
-$ 
+$
+$
 $ CONTAINER_ID=$(docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/test/.env.test ps -q openbao-test)
 $ echo "CONTAINER_ID=${CONTAINER_ID}"
 $ docker logs "$CONTAINER_ID" 2>&1 | grep -i "openbao_setup.sh"
-$ 
+$
 $ run_docker_compose logs openbao-test
-$ run_docker_compose ps 
+$ run_docker_compose ps
 $ run_docker_compose ps -a openbao-test
 $ run_docker_compose ps -q openbao-test
 $ ## to show/verify the mounts
 $ docker inspect --format '{{json .Mounts}}' lj020326-openbao-ansible-build-44-2-3-2 | jq
 ...
-$ 
+$
 $ run_docker_compose down
-$ 
+$
 $ run_docker_compose up -d
 $ run_docker_compose exec -T openbao-test openbao_info --content
 $ run_docker_compose exec -T openbao-test openbao_info --root-token
@@ -281,7 +281,7 @@ $ run_docker_compose exec -T openbao-test sh -c 'openbao_info --root-token'
 $ run_docker_compose exec openbao-test sh
 $ local root_token=$(docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/.env.test exec -T "${CONTAINER_SERVICE_NAME}" openbao_info --root-token)
 $ local admin_token=$(docker compose --project-name openbao-ansible-test -f test/docker-compose.test.yml --env-file .test/.env.test exec -T "${CONTAINER_SERVICE_NAME}" openbao_info --admin-token)
-$ 
+$
 $ run_docker_compose down
 $ rm -fr .test
 ```
@@ -465,7 +465,7 @@ Cluster Name    vault-cluster-a91d0aa5
 Cluster ID      3fd7a2ed-5fdc-4880-b14c-e706a37b6411
 HA Enabled      false
 INFO: Validating openbao_info content output...
-INFO: Test finished in 27 seconds. Status: 
+INFO: Test finished in 27 seconds. Status:
 --- Running Test: Setup Validation ---
 INFO: Executing command: test_setup_validation
 INFO: Verifying OpenBao policies and secrets...
@@ -489,7 +489,7 @@ INFO: Admin policy found.
 INFO: User policy found.
 INFO: Userpass auth method is enabled.
 INFO: KV secrets engine is enabled.
-INFO: Test finished in 7 seconds. Status: 
+INFO: Test finished in 7 seconds. Status:
 --- Running Test: Auto-Unseal and Container Resilience ---
 INFO: Executing command: test_auto_unseal
 INFO: Testing auto-unseal by restarting the container...
@@ -547,7 +547,7 @@ HA Enabled      false
 INFO: Health check attempt 4: Status = healthy
 INFO: Container is healthy.
 INFO: OpenBao successfully auto-unsealed after restart.
-INFO: Test finished in 20 seconds. Status: 
+INFO: Test finished in 20 seconds. Status:
 --- Running Test: Data Integrity and Accessibility ---
 INFO: Executing command: test_data_integrity
 INFO: Verifying data integrity and accessibility of keys...
@@ -572,7 +572,7 @@ INFO: Writing a test secret to KV engine...
 INFO: Test secret written.
 INFO: Reading the test secret back with retries...
 INFO: Secret value verified.
-INFO: Test finished in 5 seconds. Status: 
+INFO: Test finished in 5 seconds. Status:
 --- Running Test: External Service Connectivity ---
 INFO: Executing command: test_external_connectivity
 INFO: Verifying external connectivity from host to container...
@@ -586,13 +586,13 @@ INFO: Testing authenticated endpoint with root token...
 INFO: Authenticated mounts check with root token passed.
 INFO: Testing authenticated endpoint with admin token...
 INFO: Authenticated mounts check with admin token passed.
-INFO: Test finished in 4 seconds. Status: 
+INFO: Test finished in 4 seconds. Status:
 INFO: --- Test Report ---
 INFO: Writing report to .test-results/test-report.json
 INFO: All tests passed successfully.
 Successfully converted '.test-results/test-report.json' to '.test-results/junit-report.xml'.
 INFO: Final status: passed
-ljohnson@lees-mbp:[docker-openbao](main)$ 
+ljohnson@lees-mbp:[docker-openbao](main)$
 ```
 
 To run with fail-fast and keep the test temporary files for post-test analysis and/or debugging:

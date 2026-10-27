@@ -3,7 +3,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="$(basename "$0")"
+SCRIPT_NAME="$(basename "${0}")"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
 DOCKER_BUILD_DIR="${PROJECT_DIR}/image"
@@ -26,6 +26,7 @@ TESTS=(
     "Auto-Unseal and Container Resilience" "test_auto_unseal"
     "Data Integrity and Accessibility" "test_data_integrity"
     "External Service Connectivity" "test_external_connectivity"
+    "File to PebbleDB Migration" "test_file_to_pebbledb_migration"
     "Idempotent Initial Startup" "test_idempotent_initial_startup"
     "Idempotent Removal Restart" "test_idempotent_removal_restart"
     "Idempotent Modification Restart" "test_idempotent_modification_restart"
@@ -59,54 +60,21 @@ HOST_GID=$(id -g)
 
 # --- End Configuration ---
 
-# --- Utility Functions ---
-
-# Function to run docker compose commands with a consistent project and file configuration
-function run_docker_compose() {
-    docker compose --project-name "${OPENBAO_TEST_PROJECT_NAME}" -f "${DOCKER_COMPOSE_TARGET_FILE}" --env-file "${OPENBAO_TEST_TEST_ENV_FILE}" "$@"
-}
-
-function docker_compose_down() {
-  if ! run_docker_compose down "${OPENBAO_TEST_SERVICE_NAME}"; then
-      log_error "Failed to stop container with docker compose."
-      exit 1
-  fi
-}
-
-function docker_compose_up() {
-  if ! run_docker_compose up -d "${OPENBAO_TEST_SERVICE_NAME}"; then
-      log_error "Failed to start container with docker compose."
-      exit 1
-  fi
-}
-
-# Function to restart container
-function docker_compose_restart() {
-  if ! run_docker_compose restart "${OPENBAO_TEST_SERVICE_NAME}"; then
-      log_error "Failed to restart container."
-      exit 1
-  fi
-}
-
-# Function to execute commands in docker container with a consistent project and file configuration
-function exec_in_container() {
-  run_docker_compose exec -T "${OPENBAO_TEST_SERVICE_NAME}" "$@"
-}
-
+# --- Logging Functions ---
 function log_info() {
-    echo "INFO: $1" >&2
+    echo "INFO: ${1}" >&2
 }
 
 function log_error() {
-    echo "ERROR: $1" >&2
+    echo "ERROR: ${1}" >&2
 }
 
 function log_step() {
-    echo "--- $1 ---" >&2
+    echo "--- ${1} ---" >&2
 }
 
 function abort() {
-  log_error "$@"
+  log_error "${*}"
   exit 1
 }
 
@@ -114,12 +82,13 @@ function execute_eval_command() {
   local RUN_COMMAND="${*}"
 
   log_info "${RUN_COMMAND}"
+  local COMMAND_RESULT
   COMMAND_RESULT=$(eval "${RUN_COMMAND}")
 #  COMMAND_RESULT=$(eval "${RUN_COMMAND} > /dev/null 2>&1")
   local RETURN_STATUS=$?
 
-  if [[ $RETURN_STATUS -eq 0 ]]; then
-    if [[ $COMMAND_RESULT != "" ]]; then
+  if [[ ${RETURN_STATUS} -eq 0 ]]; then
+    if [[ "${COMMAND_RESULT}" != "" ]]; then
       log_info "${COMMAND_RESULT}"
     fi
   else
@@ -127,6 +96,74 @@ function execute_eval_command() {
 #    echo "${COMMAND_RESULT}"
     abort "$(printf "Failed during: %s" "${COMMAND_RESULT}")"
   fi
+}
+
+# --- Utility Functions ---
+
+# Ensure all bind-mount source directories exist (Docker Desktop race workaround)
+function ensure_mount_sources() {
+    mkdir -p \
+        "${OPENBAO_TEST_DIR}/secrets" \
+        "${OPENBAO_TEST_HOME_DIR}/config" \
+        "${OPENBAO_TEST_HOME_DIR}/database" \
+        "${OPENBAO_TEST_HOME_DIR}/file" \
+        "${OPENBAO_TEST_HOME_DIR}/logs" \
+        "${OPENBAO_TEST_HOME_DIR}/plugins"
+    # Force a filesystem sync so Docker Desktop sees the directories
+    touch "${OPENBAO_TEST_DIR}/secrets/.keep" 2>/dev/null || true
+}
+
+# Function to run docker compose commands with a consistent project and file configuration
+#function run_docker_compose() {
+##    docker compose --project-name "${OPENBAO_TEST_PROJECT_NAME}" -f "${DOCKER_COMPOSE_TARGET_FILE}" --env-file "${OPENBAO_TEST_TEST_ENV_FILE}" "$@"
+#    DOCKER_COMPOSE_COMMAND="docker compose --project-name ${OPENBAO_TEST_PROJECT_NAME} -f ${DOCKER_COMPOSE_TARGET_FILE} --env-file ${OPENBAO_TEST_TEST_ENV_FILE} ${*}"
+#    log_info "CMD> ${DOCKER_COMPOSE_COMMAND}"
+#    eval "${DOCKER_COMPOSE_COMMAND}"
+#}
+function run_docker_compose() {
+    local cmd=(
+      docker compose
+      --project-name "${OPENBAO_TEST_PROJECT_NAME}"
+      -f "${DOCKER_COMPOSE_TARGET_FILE}"
+      --env-file "${OPENBAO_TEST_TEST_ENV_FILE}"
+      "$@"
+    )
+    log_info "CMD> ${cmd[*]}"
+    "${cmd[@]}"
+}
+
+function docker_compose_down() {
+  run_docker_compose down "${OPENBAO_TEST_SERVICE_NAME}"
+  local rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+      log_error "Failed to stop container with docker compose."
+      exit 1
+  fi
+}
+
+function docker_compose_up() {
+  ensure_mount_sources
+  run_docker_compose up -d "${OPENBAO_TEST_SERVICE_NAME}"
+  local rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+      log_error "Failed to start container with docker compose."
+      exit 1
+  fi
+}
+
+# Function to restart container
+function docker_compose_restart() {
+  run_docker_compose restart "${OPENBAO_TEST_SERVICE_NAME}"
+  local rc=$?
+  if [[ ${rc} -ne 0 ]]; then
+      log_error "Failed to restart container."
+      exit 1
+  fi
+}
+
+# Function to execute commands in docker container with a consistent project and file configuration
+function exec_in_container() {
+  run_docker_compose exec -T "${OPENBAO_TEST_SERVICE_NAME}" "${@}"
 }
 
 # --- Test Utilities ---
@@ -139,11 +176,12 @@ function check_existing_mounts() {
     RUNNING_CONTAINERS=$(docker ps -q)
 
     # If there are running containers, inspect them for the mount
-    if [ -n "$RUNNING_CONTAINERS" ]; then
-        MOUNTED_CONTAINERS="$(docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}}{{end}}' "$RUNNING_CONTAINERS" | grep "${FULL_OPENBAO_TEST_HOME_DIR}" | awk '{print $1}')"
+    if [[ -n "${RUNNING_CONTAINERS}" ]]; then
+        MOUNTED_CONTAINERS="$(docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}}{{end}}' \
+          "${RUNNING_CONTAINERS}" | grep "${FULL_OPENBAO_TEST_HOME_DIR}" | awk '{print $1}')"
     fi
 
-    if [ -n "${MOUNTED_CONTAINERS}" ]; then
+    if [[ -n "${MOUNTED_CONTAINERS}" ]]; then
         log_error "ERROR: Found containers with existing mounts to the test directory ${FULL_OPENBAO_TEST_HOME_DIR}:"
         echo "${MOUNTED_CONTAINERS}" | while read -r line ; do
             log_error "  - ${line}"
@@ -160,7 +198,8 @@ function reset_test_dir() {
     rm -rf "${OPENBAO_TEST_DIR}"
     mkdir -p "${OPENBAO_TEST_DIR}/secrets"
     mkdir -p "${OPENBAO_TEST_HOME_DIR}/config"
-    mkdir -p "${OPENBAO_TEST_HOME_DIR}/file"
+    mkdir -p "${OPENBAO_TEST_HOME_DIR}/database"   # used by OpenBao ≥ 2.7 (pebbledb)
+    mkdir -p "${OPENBAO_TEST_HOME_DIR}/file"       # used by OpenBao ≤ 2.6 (file)
     mkdir -p "${OPENBAO_TEST_HOME_DIR}/logs"
     mkdir -p "${OPENBAO_TEST_HOME_DIR}/plugins"
 }
@@ -168,8 +207,14 @@ function reset_test_dir() {
 # Helper to build the Docker image
 function build_image() {
     log_info "Building Docker image: ${OPENBAO_TEST_IMAGE}"
+    log_info "Using OPENBAO_VERSION=${OPENBAO_VERSION:-latest}"
     ## the OPENBAO_TEST_IMAGE (includes the OPENBAO_TEST_IMAGE_TAG) in CICD pipelines can be specific to a build
-    if ! env OPENBAO_BUILD_IMAGE="${OPENBAO_TEST_IMAGE}" docker compose --project-name "${OPENBAO_TEST_PROJECT_NAME}" -f "${BUILD_COMPOSE_FILE}" build; then
+    if ! env \
+        OPENBAO_BUILD_IMAGE="${OPENBAO_TEST_IMAGE}" \
+        OPENBAO_VERSION="${OPENBAO_VERSION:-latest}" \
+        BUILD_ID="${OPENBAO_TEST_BUILD_ID}" \
+        docker compose --project-name "${OPENBAO_TEST_PROJECT_NAME}" \
+                       -f "${BUILD_COMPOSE_FILE}" build; then
         log_error "Docker build failed."
         exit 1
     fi
@@ -191,12 +236,15 @@ function generate_test_files() {
 
 function generate_openbao_test_passwd_file() {
     log_info "Generating passwd file..."
-    echo "${OPENBAO_USER}:x:$(id -u):$(id -g):OpenBao User:/vault:/bin/sh" > "${OPENBAO_TEST_PASSWD_FILE}"
+    UID_VAL=$(id -u)
+    GID_VAL=$(id -g)
+    echo "${OPENBAO_USER}:x:${UID_VAL}:${GID_VAL}:OpenBao User:/vault:/bin/sh" > "${OPENBAO_TEST_PASSWD_FILE}"
 }
 
 function generate_openbao_test_group_file() {
     log_info "Generating group file..."
-    echo "${OPENBAO_USER}:x:$(id -g):" > "${OPENBAO_TEST_GROUP_FILE}"
+    GID_VAL=$(id -g)
+    echo "${OPENBAO_USER}:x:${GID_VAL}:" > "${OPENBAO_TEST_GROUP_FILE}"
 }
 
 function generate_openbao_test_env_file() {
@@ -209,7 +257,7 @@ ANSIBLE_VAULT_PASSWORD=dksec://ansible_vault_password
 OPENBAO_TEST_HOME_DIR=${OPENBAO_CONTAINER_HOME_DIR}
 ENTRYPOINT_LOG_LEVEL=DEBUG
 "
-    echo "$content" > "${OPENBAO_TEST_ENV_FILE}"
+    echo "${content}" > "${OPENBAO_TEST_ENV_FILE}"
     log_info "Generated ${OPENBAO_TEST_ENV_FILE} with OPENBAO_RUN_SETUP set to true."
 }
 
@@ -224,19 +272,44 @@ OPENBAO_CONTAINER_HOME_DIR=${OPENBAO_CONTAINER_HOME_DIR}
 UID=${HOST_UID}
 GID=${HOST_GID}
 "
-    echo "$content" > "${OPENBAO_TEST_TEST_ENV_FILE}"
+    echo "${content}" > "${OPENBAO_TEST_TEST_ENV_FILE}"
     log_info "Generated ${OPENBAO_TEST_TEST_ENV_FILE}"
 }
 
 function generate_openbao_config() {
     log_info "Generating OpenBao config file..."
+
+    # Decide storage backend based on version.
+    # pebbledb was introduced in OpenBao 2.7; older releases only support "file".
+    local storage_type="pebbledb"
+    local storage_path="${OPENBAO_CONTAINER_HOME_DIR}/database"
+
+    case "${OPENBAO_VERSION:-latest}" in
+        2.5*|2.4*|2.3*|2.2*|2.1*|2.0*|1.*)
+            storage_type="file"
+            storage_path="${OPENBAO_CONTAINER_HOME_DIR}/file"
+            ;;
+        2.6*)
+            # 2.6 still used file; pebbledb arrived with 2.7
+            storage_type="file"
+            storage_path="${OPENBAO_CONTAINER_HOME_DIR}/file"
+            ;;
+        *)
+            # 2.7+, latest, or unknown → pebbledb
+            storage_type="pebbledb"
+            storage_path="${OPENBAO_CONTAINER_HOME_DIR}/database"
+            ;;
+    esac
+
+    log_info "Selected storage type '${storage_type}' for OPENBAO_VERSION=${OPENBAO_VERSION:-latest}"
+
     cat <<EOF > "${OPENBAO_TEST_CONFIG_FILE}"
 {
   "api_addr": "http://127.0.0.1:8200",
   "log_file": "${OPENBAO_CONTAINER_HOME_DIR}/logs/openbao.log",
   "storage": {
-    "file": {
-      "path": "${OPENBAO_CONTAINER_HOME_DIR}/file"
+    "${storage_type}": {
+      "path": "${storage_path}"
     }
   },
   "listener": {
@@ -270,22 +343,26 @@ function wait_for_container_health() {
     local ATTEMPT=0
     local SLEEP_TIME=6
 
-    local CONTAINER_ID=$(run_docker_compose ps -q "${OPENBAO_TEST_SERVICE_NAME}")
-    local CONTAINER_NAME=$(docker inspect --format='{{.Name}}' "${CONTAINER_ID}")
+    local CONTAINER_ID
+    CONTAINER_ID=$(run_docker_compose ps -q "${OPENBAO_TEST_SERVICE_NAME}")
+    local CONTAINER_NAME
+    CONTAINER_NAME=$(docker inspect --format='{{.Name}}' "${CONTAINER_ID}")
     log_info "Container ID ${CONTAINER_ID} => CONTAINER_NAME=${CONTAINER_NAME}"
 
     # Wait for the container to become healthy, with a timeout
-    while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
-        local RUN_STATUS=$(docker inspect --format='{{.State.Status}}' "${CONTAINER_ID}")
+    while [[ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]]; do
+        local RUN_STATUS
+        RUN_STATUS=$(docker inspect --format='{{.State.Status}}' "${CONTAINER_ID}")
 
-        if [ "${RUN_STATUS}" != "running" ]; then
-            log_error "Container ID status expected running but found [$RUN_STATUS]."
+        if [[ "${RUN_STATUS}" != "running" ]]; then
+            log_error "Container ID status expected running but found [${RUN_STATUS}]."
 #            run_docker_compose logs "${OPENBAO_TEST_SERVICE_NAME}"
             return 1
         fi
+
         # Use docker inspect to check the health status of the container
         HEALTH_STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${CONTAINER_ID}")
-        if [ -z "$HEALTH_STATUS" ]; then
+        if [[ -z "${HEALTH_STATUS}" ]]; then
             log_info "No healthcheck output available."
             sleep 1
             ATTEMPT=$((ATTEMPT + 1))
@@ -293,22 +370,31 @@ function wait_for_container_health() {
         fi
 
         log_info "Health check attempt $((ATTEMPT + 1)): RUN_STATUS = ${RUN_STATUS}, HEALTH_STATUS = ${HEALTH_STATUS}"
-        if [ "$HEALTH_STATUS" == "healthy" ]; then
+        if [[ "${HEALTH_STATUS}" == "healthy" ]]; then
             log_info "Container is healthy."
             return 0
         fi
-        # Log the healthcheck output for debugging
+
+        # Log the vault status for debugging
         log_info "Logging vault initialization status..."
-        exec_in_container sh -c "bao status 2>&1 | tee -a ${OPENBAO_CONTAINER_HOME_DIR}/logs/healthcheck_output" || log_info "Vault status update failed."
+        local status_output
+        # shellcheck disable=SC2310
+        status_output=$(exec_in_container bao status) || true
+        if [[ -n "${status_output}" ]]; then
+            log_info "Vault status:"
+            # Indent each line for readability
+            while IFS= read -r line; do
+                log_info "  ${line}"
+            done <<< "${status_output}"
+        else
+            log_info "Vault status update failed (server may still be starting)."
+        fi
 
         sleep "${SLEEP_TIME}"
         ATTEMPT=$((ATTEMPT + 1))
     done
 
-    log_error "Container did not become healthy within $MAX_ATTEMPTS retries."
-#    log_info "Container logs:"
-#    run_docker_compose logs "${OPENBAO_TEST_SERVICE_NAME}"
-##    docker logs "${CONTAINER_ID}" || true
+    log_error "Container did not become healthy within ${MAX_ATTEMPTS} retries."
     return 1
 }
 
@@ -318,42 +404,54 @@ function wait_for_setup_completion() {
     local WAIT_INTERVAL=5
     local ATTEMPT=0
 
-    while [ $ATTEMPT -lt $((MAX_WAIT / WAIT_INTERVAL)) ]; do
-        local new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
-        if [ -n "$new_setup_check" ]; then
+    while [[ ${ATTEMPT} -lt $((MAX_WAIT / WAIT_INTERVAL)) ]]; do
+        local new_setup_check
+        new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
+        if [[ -n "${new_setup_check}" ]]; then
             log_info "Display admin policy"
             run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin
             log_info "Read admin policy"
-            local policy_resp=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin)
-            if echo "$policy_resp" | grep -q "sudo"; then
+            local policy_resp
+            policy_resp=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin)
+            if echo "${policy_resp}" | grep -q "sudo"; then
                 log_info "Setup completed."
                 return 0
             fi
         fi
-        sleep $WAIT_INTERVAL
+        sleep "${WAIT_INTERVAL}"
         ATTEMPT=$((ATTEMPT + 1))
-        log_info "Setup still settling... (attempt $ATTEMPT)"
+        log_info "Setup still settling... (attempt ${ATTEMPT})"
     done
     log_error "Setup did not fully complete within timeout."
     return 1
 }
 
 function full_path() {
-  local path="$1"
-  if [ -f "$path" ] || [ ! -e "$path" ]; then
-    realpath "$path" 2>/dev/null || echo "$(cd "$(dirname "$path")" && pwd)/$(basename "$path")"
-  elif [ -d "$path" ]; then
-    (cd "$path" && pwd) 2>/dev/null || echo "$path"
+  local path="${1}"
+  if [[ -f "${path}" ]] || [[ ! -e "${path}" ]]; then
+    # realpath "${path}" 2>/dev/null || echo "$(cd "$(dirname "${path}")" && pwd)/$(basename "${path}")"
+    if realpath "${path}" 2>/dev/null; then
+      return 0
+    else
+      local dir
+      dir="$(cd "$(dirname "${path}")" && pwd)"
+      local base
+      base="$(basename "${path}")"
+      echo "${dir}/${base}"
+    fi
+
+  elif [[ -d "${path}" ]]; then
+    (cd "${path}" && pwd) 2>/dev/null || echo "${path}"
   else
-    log_error "Path '$path' is neither a file nor a directory."
+    log_error "Path '${path}' is neither a file nor a directory."
     exit 1
   fi
 }
 
 function cleanup_containers() {
     log_info "Cleaning up containers..."
-    if [ -n "${DOCKER_COMPOSE_TARGET_FILE}" ]; then
-      if [ -f "${OPENBAO_TEST_TEST_ENV_FILE}" ]; then
+    if [[ -n "${DOCKER_COMPOSE_TARGET_FILE}" ]]; then
+      if [[ -f "${OPENBAO_TEST_TEST_ENV_FILE}" ]]; then
         run_docker_compose down "${OPENBAO_TEST_SERVICE_NAME}" --remove-orphans --volumes
       fi
     fi
@@ -385,7 +483,7 @@ function cleanup() {
 
 function print_test_cases() {
     local i=0
-    while [ "$i" -lt "${#TESTS[@]}" ]; do
+    while [[ "${i}" -lt "${#TESTS[@]}" ]]; do
         local test_index=$((i / 2 + 1))
         local test_name="${TESTS[i]}"
         local test_func="${TESTS[i+1]}"
@@ -396,10 +494,10 @@ function print_test_cases() {
 
 # Function to report result
 function add_test_result() {
-    local test_index="$1"
-    local test_name="$2"
-    local failed="$3"
-    local message="$4"
+    local test_index="${1}"
+    local test_name="${2}"
+    local failed="${3}"
+    local message="${4}"
 #    local escaped_message=$(echo "${message}" | sed 's/\"/\\\"/g')
     local escaped_message="${message//\"/\\\"}"
     TEST_RESULTS+=("{\"test_index\": \"${test_index}\", \"test_name\": \"${test_name}\", \"failed\": ${failed}, \"message\": \"${escaped_message}\"}")
@@ -415,7 +513,7 @@ function test_initialization() {
 
     # Check that the init.json.enc file was created
     log_info "Verifying that init.json.enc exists on the host..."
-    if [ ! -f "${OPENBAO_TEST_HOME_DIR}/config/init.json.enc" ]; then
+    if [[ ! -f "${OPENBAO_TEST_HOME_DIR}/config/init.json.enc" ]]; then
         log_error "Encrypted init file not found."
         return 1
     fi
@@ -429,10 +527,12 @@ function test_initialization() {
 
     # Check vault initialization status
     log_info "Checking vault initialization status..."
+    # shellcheck disable=SC2310
     exec_in_container bao status || log_info "Vault status check failed."
 
     log_info "Validating openbao_info content output..."
-    local DECRYPTED_CONTENT=$(exec_in_container openbao_info --content)
+    local DECRYPTED_CONTENT
+    DECRYPTED_CONTENT=$(exec_in_container openbao_info --content)
     if ! echo "${DECRYPTED_CONTENT}" | grep -q 'root_token'; then
         log_error "Decrypted content does not contain 'root_token'."
         return 1
@@ -447,7 +547,7 @@ function test_setup_validation() {
 
     log_info "Verifying admin token is present in the encrypted init file..."
     ADMIN_TOKEN=$(exec_in_container openbao_info --admin-token)
-    if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
+    if [[ -z "${ADMIN_TOKEN}" ]] || [[ "${ADMIN_TOKEN}" = "null" ]]; then
         log_error "Admin token not found or is empty."
         return 1
     fi
@@ -457,9 +557,10 @@ function test_setup_validation() {
     log_info "secret write"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv put secret/test value=test_data
     log_info "secret read"
-    local read_back=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv get -format=json secret/test | jq -r '.data.data.value')
+    local read_back
+    read_back=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv get -format=json secret/test | jq -r '.data.data.value')
     log_info "read_back=${read_back}"
-    if [ "${read_back}" != "test_data" ]; then
+    if [[ "${read_back}" != "test_data" ]]; then
         log_error "Secret write/read failed."
         return 1
     fi
@@ -468,22 +569,45 @@ function test_setup_validation() {
     log_info "policy list"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy list -format=json
     log_info "Policy check with admin"
-#    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy list | grep admin > /dev/null; then
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ADMIN_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Admin policy not found."
         return 1
     fi
     log_info "Admin policy found."
 
     log_info "Check if the 'admin' policy is read"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ADMIN_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Admin policy read failed."
         return 1
     fi
     log_info "Admin policy read successful."
 
     log_info "Check if the 'user' policy was created"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read user > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ADMIN_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" bao policy read user > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "User policy not found."
         return 1
     fi
@@ -492,7 +616,16 @@ function test_setup_validation() {
     log_info "auth list"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao auth list -format=json
     log_info "Check if the 'userpass' auth method was enabled"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao auth list -format=json | jq -e 'has("userpass/")' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ADMIN_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" \
+      bao auth list -format=json | jq -e 'has("userpass/")' > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Userpass auth method not enabled."
         return 1
     fi
@@ -501,7 +634,16 @@ function test_setup_validation() {
     log_info "secrets list"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao secrets list -format=json
     log_info "Check if the 'kv' secrets engine was enabled"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao secrets list -format=json | jq -e '."secret/".type == "kv"' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ADMIN_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" \
+      bao secrets list -format=json | jq -e 'has("secret/")' > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "KV secrets engine not enabled."
         return 1
     fi
@@ -512,23 +654,22 @@ function test_setup_validation() {
 
 # Test Auto-Unseal and Container Resilience
 function test_auto_unseal() {
-    log_info "--- Running Test: Container Auto-unseal Validation ---"
+    log_info "--- Running Test: Auto-Unseal and Container Resilience ---"
 
-    if ! run_docker_compose restart "${OPENBAO_TEST_SERVICE_NAME}"; then
-        log_error "Failed to restart container."
-        return 1
-    fi
-    log_info "Container restarted."
-
-    log_info "Waiting for container health check to pass agan..."
+    log_info "Restart container to test auto-unseal"
+    docker_compose_restart
+    # shellcheck disable=SC2310
     wait_for_container_health || return 1
 
-    # Check that the vault is unsealed
-    if exec_in_container bao status -format=json | jq -e '.sealed' | grep -q 'true'; then
-        log_error "OpenBao remained sealed after restart."
+    log_info "Verify vault is unsealed after restart"
+    local status_output
+    # shellcheck disable=SC2310
+    status_output=$(exec_in_container bao status) || true
+    if ! echo "${status_output}" | grep -q "Sealed.*false"; then
+        log_error "Vault is still sealed after restart."
         return 1
     fi
-    log_info "OpenBao successfully auto-unsealed after restart."
+    log_info "Vault is unsealed after restart."
 
     return 0
 }
@@ -536,35 +677,38 @@ function test_auto_unseal() {
 # Test Data Integrity and Accessibility
 function test_data_integrity() {
     log_info "--- Running Test: Data Integrity and Accessibility ---"
-    local ADMIN_TOKEN=$(exec_in_container openbao_info --admin-token)
-    if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
-        log_error "Admin token could not be fetched."
+
+    local ADMIN_TOKEN
+    ADMIN_TOKEN=$(exec_in_container openbao_info --admin-token)
+    if [[ -z "${ADMIN_TOKEN}" ]]; then
+        log_error "Failed to retrieve admin token."
         return 1
     fi
     log_info "Admin token successfully fetched."
 
-    log_info "Use admin for integrity check"
-    log_info "secret write"
-    run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv put secret/integrity key=integrity_value
-    log_info "secret get"
-    run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv get -format=json secret/integrity
-    log_info "secret read"
-    local integrity_read=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv get -format=json secret/integrity | jq -r '.data.data.key')
+    log_info "Write a secret"
+    run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv put secret/integrity key=value123
 
-#    exec_in_container "VAULT_ADDR=${VAULT_ADDR} VAULT_TOKEN=${ADMIN_TOKEN} bao kv put secret/integrity key=integrity_value"
-#    local integrity_read=$(exec_in_container "VAULT_ADDR=${VAULT_ADDR} VAULT_TOKEN=${ADMIN_TOKEN} bao kv get secret/integrity | grep key | cut -d' ' -f2")
-    if [ "$integrity_read" != "integrity_value" ]; then
-        log_error "Data integrity check failed."
+    log_info "Restart container"
+    docker_compose_restart
+    # shellcheck disable=SC2310
+    wait_for_container_health || return 1
+
+    log_info "Read secret back after restart"
+    local read_back
+    read_back=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ADMIN_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao kv get -format=json secret/integrity | jq -r '.data.data.key')
+    if [[ "${read_back}" != "value123" ]]; then
+        log_error "Data integrity check failed. Expected 'value123', got '${read_back}'."
         return 1
     fi
-    log_info "Secret value verified."
+    log_info "Data integrity verified after restart."
 
     return 0
 }
 
 # Test External Service Connectivity
 function test_external_connectivity() {
-    log_info "--- Running Test: Container External Connectivity Validation ---"
+    log_info "--- Running Test: External Service Connectivity ---"
 
     #########################
     ## Note:
@@ -577,23 +721,21 @@ function test_external_connectivity() {
     ##
     local BAO_CONTAINER_PORT="8200"
 
-    log_info "Retrieving container ID and host port mapping..."
-    local CONTAINER_ID=$(run_docker_compose ps -q "${OPENBAO_TEST_SERVICE_NAME}")
-
-    ## Using the host loopback address since container binds to the 0.0.0.0 host IP
-    local BAO_HOST_ADDRESS="127.0.0.1"
+    local CONTAINER_ID
+    CONTAINER_ID=$(run_docker_compose ps -q "${OPENBAO_TEST_SERVICE_NAME}")
 
     ## Determine the host port to use based on the environment
-    local BAO_HOST_PORT=$(docker inspect --format='{{(index (index .NetworkSettings.Ports "'${BAO_CONTAINER_PORT}'/tcp") 0).HostPort}}' "${CONTAINER_ID}")
+    local BAO_HOST_PORT
+    BAO_HOST_PORT=$(docker inspect --format='{{(index (index .NetworkSettings.Ports "'"${BAO_CONTAINER_PORT}"'/tcp") 0).HostPort}}' "${CONTAINER_ID}")
+    local BAO_HOST_ADDRESS="127.0.0.1"
 
-    log_info "Container ID: ${CONTAINER_ID}, Host Address: ${BAO_HOST_ADDRESS}, Host Port: ${BAO_HOST_PORT}"
-
-    # Test unauthenticated endpoint
-    log_info "Testing unauthenticated health endpoint..."
-    if ! curl --silent --fail -o /dev/null "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/health"; then
-        log_error "Unauthenticated health check failed."
-        log_error "health check curl result:"
-        curl -v --silent "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/health"
+    log_info "Testing unauthenticated health endpoint at http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/health"
+    local HTTP_STATUS
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/health")
+    # Accept 200 (unsealed), 429 (unsealed+standby), 501 (not initialized), 503 (sealed)
+    if [[ "${HTTP_STATUS}" != "200" ]] && [[ "${HTTP_STATUS}" != "429" ]] && [[ "${HTTP_STATUS}" != "501" ]] && [[ "${HTTP_STATUS}" != "503" ]]; then
+        log_error "Unauthenticated health check failed with status ${HTTP_STATUS}."
+        log_error "Expected one of: 200, 429, 501, 503 for http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/health"
         log_error "docker container status:"
         run_docker_compose ps "${OPENBAO_TEST_SERVICE_NAME}"
         log_info "Test container network info:"
@@ -604,22 +746,24 @@ function test_external_connectivity() {
 
     # Test authenticated endpoint using the root token
     log_info "Testing authenticated endpoint with root token..."
-    local ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
-    if [ -z "${ROOT_TOKEN}" ]; then
+    local ROOT_TOKEN
+    ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
+    if [[ -z "${ROOT_TOKEN}" ]]; then
         log_error "Failed to retrieve root token via openbao_info."
         return 1
     fi
 
-    local HTTP_STATUS=$(curl -s -H "X-Vault-Token: ${ROOT_TOKEN}" -o /dev/null -w "%{http_code}" "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/mounts")
-    if [ "$HTTP_STATUS" -ne 200 ]; then
-        log_error "Authenticated mounts check failed with status code $HTTP_STATUS."
+    local HTTP_STATUS
+    HTTP_STATUS=$(curl -s -H "X-Vault-Token: ${ROOT_TOKEN}" -o /dev/null -w "%{http_code}" "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/mounts")
+    if [[ "${HTTP_STATUS}" -ne 200 ]]; then
+        log_error "Authenticated mounts check failed with status code ${HTTP_STATUS}."
         return 1
     fi
     log_info "Authenticated mounts check with root token passed."
 
     # Test authenticated endpoint using the new admin token
     ADMIN_TOKEN=$(exec_in_container openbao_info --admin-token)
-    if [ -z "$ADMIN_TOKEN" ]; then
+    if [[ -z "${ADMIN_TOKEN}" ]]; then
         log_error "Admin token not available for auth check."
         return 1
     fi
@@ -632,8 +776,9 @@ function test_external_connectivity() {
 #    log_info "Authenticated mounts check with admin token passed."
 
     log_info "Auth check with admin"
-    local mounts_check=$(curl -s -H "X-Vault-Token: ${ADMIN_TOKEN}" "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/mounts" | jq '.data')
-    if [ -z "$mounts_check" ] || [ "$mounts_check" = "null" ]; then
+    local mounts_check
+    mounts_check=$(curl -s -H "X-Vault-Token: ${ADMIN_TOKEN}" "http://${BAO_HOST_ADDRESS}:${BAO_HOST_PORT}/v1/sys/mounts" | jq '.data')
+    if [[ -z "${mounts_check}" ]] || [[ "${mounts_check}" = "null" ]]; then
         log_error "Authenticated mounts check with admin token failed."
         return 1
     fi
@@ -642,15 +787,67 @@ function test_external_connectivity() {
     return 0
 }
 
+function test_file_to_pebbledb_migration() {
+    log_info "--- Running Test: File to PebbleDB Migration ---"
+
+    # PebbleDB migration only applies to OpenBao 2.7+ (older versions use file storage natively)
+    case "${OPENBAO_VERSION:-latest}" in
+        2.5*|2.4*|2.3*|2.2*|2.1*|2.0*|1.*|2.6*)
+            log_info "Skipping file->pebbledb migration test for version ${OPENBAO_VERSION:-latest} (< 2.7)"
+            return 0
+            ;;
+        *)
+            ;;
+    esac
+
+    log_info "Stop container"
+    docker_compose_down
+
+    log_info "Preparing legacy file storage simulation"
+    execute_eval_command "rm -fr ${OPENBAO_TEST_HOME_DIR}/database/*"
+    execute_eval_command "rm -fr ${OPENBAO_TEST_HOME_DIR}/file/*"
+    execute_eval_command "rm -f ${OPENBAO_TEST_HOME_DIR}/.setup_completed"
+
+    # Seed mock legacy file data to trigger migration logic in entrypoint
+    execute_eval_command "mkdir -p ${OPENBAO_TEST_HOME_DIR}/file/core"
+    execute_eval_command "echo 'mock legacy file storage' > ${OPENBAO_TEST_HOME_DIR}/file/core/lock"
+
+    log_info "Start container with legacy file storage present"
+    docker_compose_up
+    # shellcheck disable=SC2310
+    wait_for_container_health || return 1
+
+    log_info "Verify PebbleDB database directory was populated via migration"
+    local db_files
+    db_files=$(exec_in_container "ls -A ${OPENBAO_CONTAINER_HOME_DIR}/database")
+    if [[ -z "${db_files}" ]]; then
+        log_error "PebbleDB database directory is empty after migration."
+        return 1
+    fi
+
+    log_info "Verify legacy file directory was moved aside as backup"
+    local backup_dirs
+    backup_dirs=$(find "${OPENBAO_TEST_HOME_DIR}" -maxdepth 1 -name "file.pre-pebbledb-migration.*")
+    if [[ -z "${backup_dirs}" ]]; then
+        log_error "Legacy file storage backup directory not found."
+        return 1
+    fi
+
+    log_info "Test passed: File to PebbleDB migration successful."
+    return 0
+}
+
 function test_idempotent_initial_startup() {
     log_info "--- Running Test: Idempotent Initial Startup ---"
 
-    local ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
+    local ROOT_TOKEN
+    ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
 
     log_info "Stop container"
     docker_compose_down
 
     log_info "Remove content"
+    execute_eval_command "rm -fr ${OPENBAO_TEST_HOME_DIR}/database/*"
     execute_eval_command "rm -fr ${OPENBAO_TEST_HOME_DIR}/file/*"
     execute_eval_command "rm -f ${OPENBAO_TEST_HOME_DIR}/.setup_completed"
 
@@ -659,43 +856,66 @@ function test_idempotent_initial_startup() {
     wait_for_container_health
 
     log_info "Verify setup completed"
-    local setup_file_check=$(exec_in_container "ls /vault/.setup_completed")
-    if [ -z "$setup_file_check" ]; then
+    local setup_file_check
+    setup_file_check=$(exec_in_container "ls /vault/.setup_completed")
+    if [[ -z "${setup_file_check}" ]]; then
         log_error "Setup not completed (.setup_completed missing)."
         return 1
     fi
 
-    if [ ! -f "${OPENBAO_TEST_HOME_DIR}/.setup_completed" ]; then
+    if [[ ! -f "${OPENBAO_TEST_HOME_DIR}/.setup_completed" ]]; then
         log_error "Setup not completed (.setup_completed missing)."
         return 1
     fi
-    local NEW_ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
-    if [ -z "$NEW_ROOT_TOKEN" ] || [ "$NEW_ROOT_TOKEN" = "null" ]; then
+    local NEW_ROOT_TOKEN
+    NEW_ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
+    if [[ -z "${NEW_ROOT_TOKEN}" ]] || [[ "${NEW_ROOT_TOKEN}" = "null" ]]; then
         log_error "Root token not available."
         return 1
     fi
 
     log_info "Verify a new root token has been created"
-    if [ "$NEW_ROOT_TOKEN" == "$ROOT_TOKEN" ]; then
+    if [[ "${NEW_ROOT_TOKEN}" == "${ROOT_TOKEN}" ]]; then
         log_error "A NEW root token has not been created."
         return 1
     fi
 
     log_info "Verify policy (exact match)"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${NEW_ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${NEW_ROOT_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" \
+      bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Admin policy not found."
         return 1
     fi
+
     log_info "Verify userpass (exact key)"
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${NEW_ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao auth list -format=json | jq -e 'has("userpass/")' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${NEW_ROOT_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" \
+      bao auth list -format=json | jq -e 'has("userpass/")' > /dev/null \
+      || run_docker_compose_exit=$?
+
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Userpass auth not enabled."
         return 1
     fi
     log_info "Verify tokens length"
-    local content=$(exec_in_container openbao_info --content)
-    local token_length=$(echo "$content" | jq '.tokens | length')
+    local content
+    content=$(exec_in_container openbao_info --content)
+    local token_length
+    token_length=$(echo "${content}" | jq '.tokens | length')
     local expected_number_of_tokens=3
-    if [ "$token_length" -ne "${expected_number_of_tokens}" ]; then
+    if [[ "${token_length}" -ne "${expected_number_of_tokens}" ]]; then
         log_error "Token roles not configured (expected ${expected_number_of_tokens})."
         return 1
     fi
@@ -705,8 +925,9 @@ function test_idempotent_initial_startup() {
 function test_idempotent_removal_restart() {
     log_info "--- Running Test: Idempotent Removal and Restart ---"
 
-    local ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
-    if [ -z "${ROOT_TOKEN}" ]; then
+    local ROOT_TOKEN
+    ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
+    if [[ -z "${ROOT_TOKEN}" ]]; then
         log_error "Failed to retrieve root token via openbao_info."
         return 1
     fi
@@ -718,22 +939,32 @@ function test_idempotent_removal_restart() {
     wait_for_container_health
 
     # Extra settlement time for config management
+    # shellcheck disable=SC2310
     wait_for_setup_completion || return 1
 
 #    log_info "Verify recreated (check .setup_completed and resources)"
 #    local new_setup_check=$(exec_in_container "ls /vault/.setup_completed")
-#    if [ -z "$new_setup_check" ]; then
+#    if [ -z "${new_setup_check}" ]; then
 #        log_error "Setup not recreated after restart."
 #        return 1
 #    fi
 
-    local NEW_ROOT=$(exec_in_container openbao_info --root-token)
-    if [ -z "${NEW_ROOT}" ]; then
+    local NEW_ROOT
+    NEW_ROOT=$(exec_in_container openbao_info --root-token)
+    if [[ -z "${NEW_ROOT}" ]]; then
         log_error "Failed to retrieve root token via openbao_info after policy delete and restart."
         return 1
     fi
 
-    if ! run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec \
+      -e VAULT_ADDR="${VAULT_ADDR}" \
+      -e VAULT_TOKEN="${ROOT_TOKEN}" \
+      "${OPENBAO_TEST_SERVICE_NAME}" \
+      bao policy list -format=json | jq -e '.[] | select(. == "admin")' > /dev/null \
+      || run_docker_compose_exit=$?
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Admin policy not recreated."
         return 1
     fi
@@ -742,15 +973,23 @@ function test_idempotent_removal_restart() {
 
 function test_idempotent_modification_restart() {
     log_info "--- Running Test: Idempotent Modification and Restart ---"
-    local ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
-    if [ -z "${ROOT_TOKEN}" ]; then
+    local ROOT_TOKEN
+    ROOT_TOKEN=$(exec_in_container openbao_info --root-token)
+    if [[ -z "${ROOT_TOKEN}" ]]; then
         log_error "Failed to retrieve root token via openbao_info."
         return 1
     fi
 
     log_info "Modify admin policy (remove sudo)"
-    if ! run_docker_compose exec -T -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" \
-        sh -c "echo 'path \"*\" { capabilities = [\"read\", \"list\"] }' | bao policy write admin -" ; then
+    run_docker_compose_exit=0
+    # shellcheck disable=SC2310
+    run_docker_compose exec -T \
+        -e VAULT_ADDR="${VAULT_ADDR}" \
+        -e VAULT_TOKEN="${ROOT_TOKEN}" \
+        "${OPENBAO_TEST_SERVICE_NAME}" \
+        sh -c 'printf "%s\n" "path \"*\" { capabilities = [\"read\", \"list\"] }" | bao policy write admin -' \
+        || run_docker_compose_exit=$?
+    if [[ "${run_docker_compose_exit}" -ne 0 ]]; then
         log_error "Failed to modify admin policy via single-line echo pipe."
         return 1
     fi
@@ -758,16 +997,19 @@ function test_idempotent_modification_restart() {
 
     log_info "Restart container"
     docker_compose_restart
+    # shellcheck disable=SC2310
     wait_for_container_health || return 1
 
     # Extra settlement time for config management
+    # shellcheck disable=SC2310
     wait_for_setup_completion || return 1
 
     log_info "Display admin policy"
     run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin
     log_info "Read admin policy"
-    local policy_resp=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin)
-    if ! echo "$policy_resp" | grep -q "sudo"; then
+    local policy_resp
+    policy_resp=$(run_docker_compose exec -e VAULT_ADDR="${VAULT_ADDR}" -e VAULT_TOKEN="${ROOT_TOKEN}" "${OPENBAO_TEST_SERVICE_NAME}" bao policy read admin)
+    if ! echo "${policy_resp}" | grep -q "sudo"; then
         log_error "Policy not enforced to original YAML (sudo missing)."
         return 1
     fi
@@ -779,38 +1021,44 @@ function test_idempotent_modification_restart() {
 # --- Core Functions ---
 
 function run_test() {
-    local test_index="$1"
-    local test_name="$2"
-    local test_command="$3"
-    log_step "Running Test: $test_index: $test_name"
-    log_info "Executing command: $test_command"
+    local test_index="${1}"
+    local test_name="${2}"
+    local test_command="${3}"
+    log_step "Running Test: ${test_index}: ${test_name}"
+    log_info "Executing command: ${test_command}"
 
     local message=""
     local failed="true"
-    local start_time=$(date +%s)
+    local start_time
+    start_time=$(date +%s)
 
     cleanup_containers
     docker_compose_up
-    wait_for_container_health || {
-        message="healthcheck before running test '$test_name' failed. Check logs for details."
+
+    wait_for_container_health_exit=0
+    # shellcheck disable=SC2310
+    wait_for_container_health || wait_for_container_health_exit=$?
+    if [[ "${wait_for_container_health_exit}" -ne 0 ]]; then
+        message="healthcheck before running test '${test_name}' failed. Check logs for details."
         add_test_result "${test_index}" "${test_name}" "${failed}" "${message}"
         return 1
-    }
-    if eval "$test_command"; then
+    fi
+    if eval "${test_command}"; then
         failed="false"
-        message="Test '$test_index' passed successfully."
+        message="Test '${test_index}' passed successfully."
     else
-        message="Test '$test_index' failed. Check logs for details."
+        message="Test '${test_index}' failed. Check logs for details."
     fi
 
-    local end_time=$(date +%s)
+    local end_time
+    end_time=$(date +%s)
     local duration=$((end_time - start_time))
 
-    log_info "Test '$test_index' finished in ${duration} seconds. Failed: ${failed}"
+    log_info "Test '${test_index}' finished in ${duration} seconds. Failed: ${failed}"
 
     # Store results for final report
     add_test_result "${test_index}" "${test_name}" "${failed}" "${message}"
-    if [ "${failed}" == "true" ]; then
+    if [[ "${failed}" == "true" ]]; then
         return 1
     fi
     return 0
@@ -824,15 +1072,15 @@ function run_all_tests() {
     local overall_failed=0
     local total_tests=$((${#TESTS[@]} / 2))
 
-    while [ "$i" -lt "${#TESTS[@]}" ]; do
+    while [[ "${i}" -lt "${#TESTS[@]}" ]]; do
         local test_name="${TESTS[i]}"
         local test_function="${TESTS[i+1]}"
         local test_index=$((i / 2 + 1))
 
         # --- Test ID Filtering Logic (NEW) ---
-        if [[ -n "$TARGET_TEST" ]]; then
+        if [[ -n "${TARGET_TEST}" ]]; then
             # Check if TARGET_TEST matches index or function name
-            if [[ "$TARGET_TEST" != "$test_index" ]] && [[ "$TARGET_TEST" != "$test_function" ]]; then
+            if [[ "${TARGET_TEST}" != "${test_index}" ]] && [[ "${TARGET_TEST}" != "${test_function}" ]]; then
                 log_info "Skipping test ${test_index}: ${test_name} (Targeted test: ${TARGET_TEST})"
                 i=$((i + 2))
                 continue
@@ -846,7 +1094,7 @@ function run_all_tests() {
         local test_rc=$?
         overall_failed=$((overall_failed + test_rc))
 
-        if [ $FAIL_FAST -eq 1 ] && [ $test_rc -ne 0 ]; then
+        if [[ ${FAIL_FAST} -eq 1 ]] && [[ ${test_rc} -ne 0 ]]; then
             log_error "Fail-fast triggered: Stopping after ${test_name} failure."
             break  # Stop loop on first failure
         fi
@@ -855,7 +1103,7 @@ function run_all_tests() {
         i=$((i + 2))
     done
 
-    return $overall_failed
+    return "${overall_failed}"
 }
 
 function usage() {
@@ -873,14 +1121,14 @@ function usage() {
 
     echo "  -b, --build-id            Build ID (default 'test')."
     echo "  -i, --image-id            Docker image id (including namespace and tag)."
-    echo "  -i, --image-name          Docker image name."
+    echo "  -n, --image-name          Docker image ID/name. (image name only without tag)"
     echo "  -r, --test-results-dir    Test results directory (default 'test-results')."
     echo "  -d, --test-dir            Test run directory (default '.tests')."
     echo "  -x                        Run in shell debug mode"
     echo ""
     echo "Available Tests (Index | Function Name):"
     local i=0
-    while [ "$i" -lt "${#TESTS[@]}" ]; do
+    while [[ "${i}" -lt "${#TESTS[@]}" ]]; do
         local test_index=$((i / 2 + 1))
         local test_name="${TESTS[i]}"
         local test_func="${TESTS[i+1]}"
@@ -902,8 +1150,8 @@ function usage() {
 # --- Argument Parsing ---
 function parse_args() {
     while [[ $# -gt 0 ]]; do
-        key="$1"
-        case $key in
+        local key="${1}"
+        case "${key}" in
             -f|--fail-fast)
                 FAIL_FAST=1
                 shift
@@ -921,46 +1169,48 @@ function parse_args() {
                 shift
                 ;;
             -t|--test-id)
-                if [[ -z "$2" ]]; then
+                if [[ -z "${2}" ]]; then
                     log_error "Error: --test-id requires a value (index or function name)."
                     usage
                     exit 1
                 fi
-                TARGET_TEST="$2"
+                TARGET_TEST="${2}"
                 shift 2
                 ;;
             -b|--build-id)
-                OPENBAO_TEST_BUILD_ID="$2"
+                OPENBAO_TEST_BUILD_ID="${2}"
                 OPENBAO_TEST_IMAGE_TAG="${OPENBAO_TEST_BUILD_ID}"
                 shift 2
                 ;;
             -i|--image)
-                OPENBAO_TEST_IMAGE="$2"
+                OPENBAO_TEST_IMAGE="${2}"
                 shift 2
                 ;;
             -n|--image-name)
-                OPENBAO_TEST_IMAGE_NAME="$2"
+                OPENBAO_TEST_IMAGE_NAME="${2}"
                 shift 2
                 ;;
             -r|--test-results-dir)
-                OPENBAO_TEST_RESULTS_DIR="$2"
+                OPENBAO_TEST_RESULTS_DIR="${2}"
                 shift 2
                 ;;
             -d|--test-dir)
-                OPENBAO_TEST_DIR="$2"
+                OPENBAO_TEST_DIR="${2}"
                 shift 2
                 ;;
             -h|--help)
                 usage
                 exit 0
                 ;;
-            -l) print_test_cases && exit ;;
+            -l)
+                # shellcheck disable=SC2310
+                print_test_cases && exit ;;
             -x)
                 set -x
                 shift
                 ;;
             *)
-                log_error "Unknown option: $1"
+                log_error "Unknown option: ${1}"
                 usage
                 exit 1
                 ;;
@@ -971,15 +1221,15 @@ function parse_args() {
 # Main function
 function main() {
     log_info "--- Starting OpenBao Test Suite ---"
-    log_info "Command line arguments: $*"
+    log_info "Command line arguments: ${*}"
 
     # --- UID/GID Detection ---
     log_info "Detected host UID: ${HOST_UID}, GID: ${HOST_GID}"
-    if [ "$HOST_UID" -eq 0 ]; then
+    if [[ "${HOST_UID}" -eq 0 ]]; then
         log_info "WARNING: Running as root - best practice to test container as non-root user with only run container permissions."
     fi
 
-    parse_args "$@"
+    parse_args "${@}"
 
     #######################################
     ## set build specific variables
@@ -1006,7 +1256,7 @@ function main() {
     OPENBAO_TEST_SETUP_CONFIG_FILE="${OPENBAO_TEST_HOME_DIR}/config/openbao_config.yml"
 
     # --- Check for Required Files ---
-    if [ ! -f "${DOCKER_BUILD_DIR}/Dockerfile" ]; then
+    if [[ ! -f "${DOCKER_BUILD_DIR}/Dockerfile" ]]; then
         log_error "Dockerfile not found at: ${DOCKER_BUILD_DIR}/Dockerfile"
         exit 1
     fi
@@ -1016,18 +1266,25 @@ function main() {
     reset_test_dir
 
     # --- Check for Pre-existing Mounts ---
-    local FULL_OPENBAO_TEST_HOME_DIR=$(full_path "${OPENBAO_TEST_HOME_DIR}")
-    if ! check_existing_mounts; then
+    local FULL_OPENBAO_TEST_HOME_DIR
+    FULL_OPENBAO_TEST_HOME_DIR=$(full_path "${OPENBAO_TEST_HOME_DIR}")
+
+    check_existing_mounts_exit=0
+    # shellcheck disable=SC2310
+    check_existing_mounts || check_existing_mounts_exit=$?
+    if [[ "${check_existing_mounts_exit}" -ne 0 ]]; then
         log_error "Exiting due to conflicting mounts."
         exit 1
     fi
 
-    if [ "${SKIP_BUILD}" -eq 0 ]; then
+    if [[ "${SKIP_BUILD}" -eq 0 ]]; then
       build_image
     else
       log_info "Skipping build for image ${OPENBAO_TEST_IMAGE}"
       log_info "Checking if image ${OPENBAO_TEST_IMAGE} is present"
-      if [ "$(docker images -q "${OPENBAO_TEST_IMAGE}")" ]; then
+      local image_present
+      image_present=$(docker images -q "${OPENBAO_TEST_IMAGE}")
+      if [[ -n "${image_present}" ]]; then
         log_info "${OPENBAO_TEST_IMAGE} Image is present."
       else
         log_error "${OPENBAO_TEST_IMAGE} Image is not present."
@@ -1036,10 +1293,6 @@ function main() {
 
     # --- Generate Test Files ---
     generate_test_files
-
-    # --- Run Test Suite ---
-    log_info "Starting validation test suite."
-    local overall_status="success"
 
     # --- Run Test Suite ---
     log_info "Starting validation test suite."
@@ -1057,8 +1310,9 @@ function main() {
     echo "[$(IFS=,; echo "${TEST_RESULTS[*]}") ]" | jq '.' > "${OPENBAO_TEST_JSON_REPORT_FILE}"
 
     # --- Determine Overall Status ---
-    local failed_tests=$(jq '[.[] | select(.failed == true)] | length' "${OPENBAO_TEST_JSON_REPORT_FILE}")
-    if [ "$failed_tests" -gt 0 ]; then
+    local failed_tests
+    failed_tests=$(jq '[.[] | select(.failed == true)] | length' "${OPENBAO_TEST_JSON_REPORT_FILE}")
+    if [[ "${failed_tests}" -gt 0 ]]; then
         log_error "Some tests failed. Check the report for details."
         overall_status="failed"
         log_info "Post Failed Test checks:"
@@ -1076,20 +1330,20 @@ function main() {
         overall_status="passed"
     fi
 
-    if [ "${GENERATE_OPENBAO_TEST_JUNIT_REPORT_FILE}" -eq 1 ]; then
+    if [[ "${GENERATE_OPENBAO_TEST_JUNIT_REPORT_FILE}" -eq 1 ]]; then
         eval "${SCRIPT_DIR}/json2junit.py ${OPENBAO_TEST_JSON_REPORT_FILE} ${OPENBAO_TEST_JUNIT_REPORT_FILE}"
     fi
 
     # --- Clean up after all tests are done ---
-    # Don't exit on error here, just log it.
-    if [ "${KEEP_TMP_FILES}" -eq 0 ]; then
+    if [[ "${KEEP_TMP_FILES}" -eq 0 ]]; then
+        # shellcheck disable=SC2310
         cleanup || log_error "Cleanup failed."
     fi
 
     log_info "Final status: ${overall_status}"
     jq < "${OPENBAO_TEST_JSON_REPORT_FILE}"
 
-    exit "$failed_tests"
+    exit "${failed_tests}"
 }
 
 # This block will never execute, but tells ShellCheck the functions are "used"
@@ -1103,10 +1357,11 @@ if false; then
     test_auto_unseal
     test_data_integrity
     test_external_connectivity
+    test_file_to_pebbledb_migration
     test_idempotent_initial_startup
     test_idempotent_removal_restart
     test_idempotent_modification_restart
 fi
 
 # Call main function
-main "$@"
+main "${@}"
