@@ -5,7 +5,7 @@ Testing notes
 root@control01:[docker]$ echo "foobar123" > openbao/home/config/.vault_pass
 root@control01:[docker]$ docker service rm docker_stack_openbao
 docker_stack_openbao
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ cat openbao/openbao.env
 #
 # Ansible managed
@@ -23,7 +23,7 @@ OPENBAO_CONFIG_DIR=/vault/config
 ################################
 ## vaulted credentials
 ANSIBLE_VAULT_PASSWORD=dksec://ansible_vault_password
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ cat openbao/home/config/local.json
 {
     "api_addr": "http://127.0.0.1:8200",
@@ -51,27 +51,27 @@ root@control01:[docker]$ cat openbao/home/config/local.json
         }
     }
 }
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ rm -rf openbao/home/file/*
 root@control01:[docker]$ rm -f openbao/home/config/init.*
 root@control01:[docker]$ rm -f openbao/home/logs/*
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ docker stack deploy -c docker-compose.yml docker_stack --with-registry-auth
 Creating service docker_stack_openbao
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ docker service ps docker_stack_openbao
 ID             NAME                     IMAGE                                           NODE        DESIRED STATE   CURRENT STATE            ERROR     PORTS
-w3abu1fgfqcy   docker_stack_openbao.1   media.johnson.int:5000/openbao-ansible:latest   control01   Running         Running 37 seconds ago             
-root@control01:[docker]$ 
-root@control01:[docker]$ 
+w3abu1fgfqcy   docker_stack_openbao.1   media.johnson.int:5000/openbao-ansible:latest   control01   Running         Running 37 seconds ago
+root@control01:[docker]$
+root@control01:[docker]$
 root@control01:[docker]$ CONTAINER_ID=$(docker ps --filter "name=docker_stack_openbao" --format "{{.ID}}")
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ docker service logs -f docker_stack_openbao
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: Background init/unseal process started.
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: Waiting for OpenBao server to become responsive...
 docker_stack_openbao.1.q26m9l693een@control01    | ==> OpenBao server configuration:
-docker_stack_openbao.1.q26m9l693een@control01    | 
-docker_stack_openbao.1.q26m9l693een@control01    | Administrative Namespace: 
+docker_stack_openbao.1.q26m9l693een@control01    |
+docker_stack_openbao.1.q26m9l693een@control01    | Administrative Namespace:
 docker_stack_openbao.1.q26m9l693een@control01    |              Api Address: https://openbao.admin.johnson.int
 docker_stack_openbao.1.q26m9l693een@control01    |                      Cgo: disabled
 docker_stack_openbao.1.q26m9l693een@control01    |          Cluster Address: https://openbao.admin.johnson.int:444
@@ -83,11 +83,11 @@ docker_stack_openbao.1.q26m9l693een@control01    |            Recovery Mode: fal
 docker_stack_openbao.1.q26m9l693een@control01    |                  Storage: file
 docker_stack_openbao.1.q26m9l693een@control01    |                  Version: OpenBao v2.3.2, built 2025-08-08T04:05:27Z
 docker_stack_openbao.1.q26m9l693een@control01    |              Version Sha: b1a68f558c89d18d38fbb8675bb6fc1d90b71e98
-docker_stack_openbao.1.q26m9l693een@control01    | 
+docker_stack_openbao.1.q26m9l693een@control01    |
 docker_stack_openbao.1.q26m9l693een@control01    | 2025-08-29T09:19:13.157-0400 [INFO]  proxy environment: http_proxy="" https_proxy="" no_proxy=""
 docker_stack_openbao.1.q26m9l693een@control01    | ==> OpenBao server started! Log data will stream in below:
 docker_stack_openbao.1.q26m9l693een@control01    | 2025-08-29T09:19:13.157-0400 [INFO]  core: Initializing version history cache for core
-docker_stack_openbao.1.q26m9l693een@control01    | 
+docker_stack_openbao.1.q26m9l693een@control01    |
 docker_stack_openbao.1.q26m9l693een@control01    | 2025-08-29T09:19:13.791-0400 [INFO]  core: security barrier not initialized
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: OpenBao server is responsive.
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: Checking if OpenBao is initialized...
@@ -150,8 +150,8 @@ docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: OpenBao is a
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: OpenBao successfully unsealed.
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: Auto-unseal attempt completed.
 docker_stack_openbao.1.q26m9l693een@control01    | Entrypoint INFO: Background init/unseal process completed successfully.
-^Croot@control01:[docker]$ 
-root@control01:[docker]$ 
+^Croot@control01:[docker]$
+root@control01:[docker]$
 ```
 
 ## Fetch content from container
@@ -259,7 +259,7 @@ DEBUG: Decryption successful to /tmp/init.json.decrypted.
 }
 DEBUG: Cleaning up temporary files...
 DEBUG: Cleanup complete.
-root@control01:[docker]$ 
+root@control01:[docker]$
 
 root@control01:[docker]$ ROOT_TOKEN=$(docker exec -it "${CONTAINER_ID}" sh -c '
   # Source the secret expansion script to resolve variables like ANSIBLE_VAULT_PASSWORD.
@@ -305,7 +305,7 @@ root@control01:[docker]$ ROOT_TOKEN=$(docker exec -it "${CONTAINER_ID}" sh -c '
 ')
 root@control01:[docker]$ echo "ROOT_TOKEN=${ROOT_TOKEN}"
 ROOT_TOKEN=s.RAhB3bMIaf8wyyGAvegvxQbF
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ docker exec -it "${CONTAINER_ID}" sh -c '
   ansible-vault decrypt /vault/config/init.json.enc --vault-password-file /vault/config/.vault_pass --output /tmp/init.json.decrypted > /dev/null 2>&1;
   cat /tmp/init.json.decrypted;
@@ -322,12 +322,12 @@ root@control01:[docker]$ docker exec -it "${CONTAINER_ID}" sh -c '
   ],
   "root_token": "s.RAhB3bMIaf8wyyGAvegvxQbF"
 }
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ docker exec -it ${CONTAINER_ID} sh
-/ $ 
+/ $
 / $ export ROOT_TOKEN="s.RAhB3bMIaf8wyyGAvegvxQbF"
 / $ export VAULT_ADDR=http://127.0.0.1:8200
-/ $ 
+/ $
 / $ # Test the standard mounts endpoint (should now work!)
 / $ curl -H "X-OpenBao-Token: ${ROOT_TOKEN}" "${VAULT_ADDR}/v1/sys/mounts"
 {"errors":["permission denied"]}
@@ -335,15 +335,15 @@ root@control01:[docker]$ docker exec -it ${CONTAINER_ID} sh
 
 {"sys/":{"accessor":"system_d4d635d6","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Accept"]},"description":"system endpoints used for control, policy and debugging","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":true,"type":"system","uuid":"df37acad-9c9f-8e73-5582-94c76b15b1da"},"identity/":{"accessor":"identity_792bb078","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Authorization"]},"description":"identity store","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"identity","uuid":"3c599ed1-681e-c156-f797-59e18c801fe0"},"cubbyhole/":{"accessor":"cubbyhole_b5cfa9fc","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0},"description":"per-token private secret storage","external_entropy_access":false,"local":true,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"cubbyhole","uuid":"d9bd4d4f-55d4-df49-5efe-d8aac733947e"},"request_id":"ea0e7560-2dd8-a5a7-4601-2e13656c8df4","lease_id":"","renewable":false,"lease_duration":0,"data":{"cubbyhole/":{"accessor":"cubbyhole_b5cfa9fc","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0},"description":"per-token private secret storage","external_entropy_access":false,"local":true,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"cubbyhole","uuid":"d9bd4d4f-55d4-df49-5efe-d8aac733947e"},"identity/":{"accessor":"identity_792bb078","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Authorization"]},"description":"identity store","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"identity","uuid":"3c599ed1-681e-c156-f797-59e18c801fe0"},"sys/":{"accessor":"system_d4d635d6","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Accept"]},"description":"system endpoints used for control, policy and debugging","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":true,"type":"system","uuid":"df37acad-9c9f-8e73-5582-94c76b15b1da"}},"wrap_info":null,"warnings":null,"auth":null}
 
-/ $ 
+/ $
 / $ # Test the health endpoint again (should still work)
 / $ curl -H "X-OpenBao-Token: ${ROOT_TOKEN}" "${VAULT_ADDR}/v1/sys/health?standbyok=true"
 {"initialized":true,"sealed":false,"standby":false,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_utc":1756409319,"version":"2.3.2","cluster_name":"vault-cluster-8179c851","cluster_id":"cea5f557-ab69-86ed-34e2-c82f9ffb599e"}
-/ $ 
+/ $
 / $ # Test another sys endpoint
 / $ curl -H "X-OpenBao-Token: ${ROOT_TOKEN}" "${VAULT_ADDR}/v1/sys/seal-status"
 {"type":"shamir","initialized":true,"sealed":false,"t":3,"n":5,"progress":0,"nonce":"","version":"2.3.2","build_date":"2025-08-08T04:05:27Z","migration":false,"cluster_name":"vault-cluster-8179c851","cluster_id":"cea5f557-ab69-86ed-34e2-c82f9ffb599e","recovery_seal":false,"storage_type":"file"}
-/ $ 
+/ $
 / $ vault login ${ROOT_TOKEN}
 Success! You are now authenticated. The token information displayed below is
 already stored in the token helper. You do NOT need to run "bao login" again.
@@ -358,7 +358,7 @@ token_renewable      false
 token_policies       ["root"]
 identity_policies    []
 policies             ["root"]
-/ $ 
+/ $
 / $ vault policy write admin - <<EOF
 > path "*" {
 >   capabilities = ["create", "read", "update", "delete", "list", "sudo"]
@@ -375,9 +375,9 @@ token_renewable      true
 token_policies       ["admin" "default"]
 identity_policies    []
 policies             ["admin" "default"]
-/ $ 
+/ $
 / $ exit
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ curl -s "https://openbao.admin.johnson.int/v1/sys/health" | jq
 {
   "initialized": true,
@@ -434,17 +434,17 @@ root@control01:[docker]$ curl -v -k "https://openbao.admin.johnson.int/v1/sys/he
 > Host: openbao.admin.johnson.int
 > User-Agent: curl/8.5.0
 > Accept: */*
-> 
-< HTTP/2 200 
+>
+< HTTP/2 200
 < cache-control: no-store
 < content-type: application/json
 < date: Fri, 29 Aug 2025 05:14:33 GMT
 < strict-transport-security: max-age=31536000; includeSubDomains
 < content-length: 294
-< 
+<
 {"initialized":true,"sealed":false,"standby":false,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_utc":1756444473,"version":"2.3.2","cluster_name":"vault-cluster-446fe7ab","cluster_id":"2a04b99c-5443-b5bf-d3f6-966dbc2ecc58"}
 * Connection #0 to host openbao.admin.johnson.int left intact
-root@control01:[docker]$ 
+root@control01:[docker]$
 root@control01:[docker]$ curl -v -k -H "X-Vault-Token: ${ROOT_TOKEN_ACTUAL}" "https://openbao.admin.johnson.int/v1/sys/mounts"
 * Host openbao.admin.johnson.int:443 was resolved.
 * IPv6: (none)
@@ -489,15 +489,15 @@ root@control01:[docker]$ curl -v -k -H "X-Vault-Token: ${ROOT_TOKEN_ACTUAL}" "ht
 > User-Agent: curl/8.5.0
 > Accept: */*
 > X-Vault-Token: s.RAhB3bMIaf8wyyGAvegvxQbF
-> 
-< HTTP/2 200 
+>
+< HTTP/2 200
 < cache-control: no-store
 < content-type: application/json
 < date: Fri, 29 Aug 2025 05:14:43 GMT
 < strict-transport-security: max-age=31536000; includeSubDomains
-< 
+<
 {"sys/":{"accessor":"system_37a127b8","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Accept"]},"description":"system endpoints used for control, policy and debugging","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":true,"type":"system","uuid":"8e374545-3ca3-9fc5-b9dc-22dbd08afc36"},"identity/":{"accessor":"identity_29e5f431","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Authorization"]},"description":"identity store","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"identity","uuid":"53e62bb3-c8a4-9a7e-ca6f-8d69e55c4f2a"},"cubbyhole/":{"accessor":"cubbyhole_34f08350","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0},"description":"per-token private secret storage","external_entropy_access":false,"local":true,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"cubbyhole","uuid":"411af0f8-7693-961e-3ecd-c8127a5a1b65"},"request_id":"f89d07a5-c597-2060-c3c2-33c90ea3ff12","lease_id":"","renewable":false,"lease_duration":0,"data":{"cubbyhole/":{"accessor":"cubbyhole_34f08350","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0},"description":"per-token private secret storage","external_entropy_access":false,"local":true,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"cubbyhole","uuid":"411af0f8-7693-961e-3ecd-c8127a5a1b65"},"identity/":{"accessor":"identity_29e5f431","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Authorization"]},"description":"identity store","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":false,"type":"identity","uuid":"53e62bb3-c8a4-9a7e-ca6f-8d69e55c4f2a"},"sys/":{"accessor":"system_37a127b8","config":{"default_lease_ttl":0,"force_no_cache":false,"max_lease_ttl":0,"passthrough_request_headers":["Accept"]},"description":"system endpoints used for control, policy and debugging","external_entropy_access":false,"local":false,"options":null,"plugin_version":"","running_plugin_version":"v2.3.2+builtin.bao","running_sha256":"","seal_wrap":true,"type":"system","uuid":"8e374545-3ca3-9fc5-b9dc-22dbd08afc36"}},"wrap_info":null,"warnings":null,"auth":null}
 * Connection #0 to host openbao.admin.johnson.int left intact
-root@control01:[docker]$ 
+root@control01:[docker]$
 
 ```

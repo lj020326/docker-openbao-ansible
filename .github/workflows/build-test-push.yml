@@ -35,7 +35,7 @@ jobs:
           # Read arrays from YAML file and convert them to compact JSON arrays
           VERSIONS_JSON=$(yq -o=json -I=0 '.versions' .github/build-config.yml)
           PLATFORMS_JSON=$(yq -o=json -I=0 '.platforms' .github/build-config.yml)
-          
+
           echo "versions=${VERSIONS_JSON}" >> $GITHUB_OUTPUT
           echo "platforms=${PLATFORMS_JSON}" >> $GITHUB_OUTPUT
 
@@ -116,7 +116,8 @@ jobs:
         run: |
           # The test script handles all Docker Compose commands.
           # It cleans up before and after the test run.
-          bash test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results' \
+          env OPENBAO_VERSION="${{ matrix.version }}" \
+            bash test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results' \
             --image-name ${{ env.DOCKER_IMAGE }} --build-id ${{ env.BUILD_ID }}
 
       - name: Show contents of .test-results/ directory

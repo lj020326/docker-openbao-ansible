@@ -4,5 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
+        - OPENBAO_VERSION=${OPENBAO_VERSION:-latest}
         - OPENBAO_BUILD_IMAGE=${OPENBAO_BUILD_IMAGE}
+        - BUILD_ID=${BUILD_ID:-devel}
+        - BUILD_DATE=${BUILD_DATE:-}
     image: "${OPENBAO_BUILD_IMAGE}"

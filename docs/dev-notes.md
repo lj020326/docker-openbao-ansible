@@ -325,7 +325,7 @@ INFO: Final status: passed
     "message": "Test passed successfully."
   }
 ]
-$ 
+$
 ```
 
 The latest test results are in the embedded file with header regex "^### FILE: test-log.txt ###"

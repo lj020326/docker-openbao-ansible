@@ -23,30 +23,46 @@ buildTestAppendIdOption: "--build-id"
 #      --skip-build \
 #      --test-results-dir '.test-results'
 
-#buildTestCommand: test/test-openbao-container.sh -x --junit --skip-build --test-results-dir '.test-results'
-buildTestCommand: test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
+# buildTestCommand: test/test-openbao-container.sh -x --junit --skip-build --test-results-dir '.test-results'
+# buildTestCommand: test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
 
 #  testResultsPath: ".test-results/test-results.log"
 testResultsPath: ".test-results/*"
 
 buildImageList:
   - buildArgs:
-      OPENBAO_VERSION: "2.5.5"
+      OPENBAO_VERSION: "2.7"
     buildTags:
-      - "2.5.5"
+      - "2.7"
+    buildTestCommand: |
+      env OPENBAO_VERSION='2.7' test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
   - buildArgs:
-      OPENBAO_VERSION: "2.4"
+      OPENBAO_VERSION: "2.6"
     buildTags:
-      - "2.4"
+      - "2.6"
+    buildTestCommand: |
+      env OPENBAO_VERSION='2.6' test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
   - buildArgs:
-      OPENBAO_VERSION: "2.3"
+      OPENBAO_VERSION: "2.5"
     buildTags:
-      - "2.3"
-  - buildArgs:
-      OPENBAO_VERSION: "2.2"
-    buildTags:
-      - "2.2"
+      - "2.5"
+    buildTestCommand: |
+      env OPENBAO_VERSION='2.5' test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
+  # - buildArgs:
+  #     OPENBAO_VERSION: "2.4"
+  #   buildTags:
+  #     - "2.4"
+  # - buildArgs:
+  #     OPENBAO_VERSION: "2.3"
+  #   buildTags:
+  #     - "2.3"
+  # - buildArgs:
+  #     OPENBAO_VERSION: "2.2"
+  #   buildTags:
+  #     - "2.2"
   - buildArgs:
       OPENBAO_VERSION: "latest"
     buildTags:
       - latest
+    buildTestCommand: |
+      env OPENBAO_VERSION='latest' test/test-openbao-container.sh --junit --skip-build --test-results-dir '.test-results'
