@@ -7,18 +7,19 @@ import os
 import subprocess
 import sys
 import traceback
-import yaml
 from datetime import datetime
+
+import yaml
 from hvac import Client
+
 # from hvac.exceptions import InvalidPath, InvalidRequest
 # import hvac.exceptions
-
 # Existing hvac exceptions (expand as needed)
 from hvac.exceptions import (
     Forbidden,
-    InvalidRequest,
     InvalidPath,
     # Add others if needed: InternalServerError, etc.
+    InvalidRequest,
 )
 
 # __scriptName__ = sys.argv[0]
@@ -245,7 +246,7 @@ def ensure_user(client, vault_data, username, password, policies):
             logger.warning(
                 f"Unexpected error verifying user {username}: {e}; recreating."
             )
-            pass  # Fall through to recreate
+            # Fall through to recreate
 
     # Create if not exists or invalid
     try:
